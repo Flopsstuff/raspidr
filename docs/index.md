@@ -45,6 +45,11 @@ How the system works end to end.
 - [Measurements (2026-09-26)](architecture.md#measurements-2026-09-26) — CPU, RAM, latencies
 - [Known issues and next steps](architecture.md#known-issues-and-next-steps)
 
+## [Power efficiency experiments](power_efficiency.md)
+
+Ideas to measure before changing the architecture: audio capture, wake-word gating, GPIO, native components, codec and
+amplifier power management, with an ordered A/B test plan.
+
 ## [Hardware](hardware.md)
 
 The speaker device: board, pins, peripherals and their quirks.

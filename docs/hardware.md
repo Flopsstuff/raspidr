@@ -236,6 +236,10 @@ The previous code for this hardware lives on the Pi in `~/sharm/client/pizero2w/
 | `test_ups.py`, `test_ups_events.py`, `test_encoder.py`, `test_neopixel.py` | manual hardware smoke tests |
 | `firstboot.sh` | initial setup of a clean image (config.txt, packages, pigpiod override, WM8960 driver, reboot) |
 
+Picovoice is historical context only and must not be considered for current RaspiDR work. They rejected the free trial
+request, and even a paid evaluation is not self-service: it requires a contact form and approval through their sales team.
+This makes test and production keys too difficult to obtain and the service unsuitable as a project dependency.
+
 Python packages in `~/venv`: `adafruit-circuitpython-neopixel`, `Adafruit-Blinka`, `pigpio`, `smbus2`
 (+ system `smbus`), `pvporcupine 3.0.5`, `PyAudio`, `RPi.GPIO`/`rpi-lgpio`, `rpi-ws281x`.
 

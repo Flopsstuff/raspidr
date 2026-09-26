@@ -42,6 +42,26 @@ the speaker hears itself).
 MUTE: a long press switches the wake word off — the assistant interrupts whatever it was doing and closes the microphone
 (`arecord` exits, nothing is recorded) until the next long press. See [Encoder](#encoder-knob-service).
 
+## /say API: speech on request
+
+Other agents can make the speaker say something: `src/api.py`, a stdlib HTTP server inside the assistant process.
+
+```bash
+curl -H "Authorization: Bearer $RASPIDR_API_TOKEN" --data-binary 'Привет от агента' http://$PI_HOST:8765/say
+curl -H "Authorization: Bearer $RASPIDR_API_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"text": "Привет от агента"}' http://$PI_HOST:8765/say
+# → 200 {"ok": true, "chunks": 1}
+```
+
+- Auth: `Authorization: Bearer <RASPIDR_API_TOKEN>` (from `.env`); without a token in `.env` the API is off.
+  Port `RASPIDR_API_PORT` (8765), all interfaces, plain HTTP — keep it inside the LAN.
+- The text (up to 2000 characters) is cleaned and split like an answer (`Chunker`) and synthesized the same way
+  (Groq, on any error xAI). The response comes once all chunks are synthesized; playback starts with the first one.
+- It plays when the speaker is free: a dialog in progress (including the follow-up listening) is not interrupted.
+  State ANNOUNCE, "speak" animation on the ring; the wake word is ignored for `--mute-after` afterwards. A short press
+  cuts it off. With the wake word switched off it still speaks — only the microphone is off.
+- Errors: 400 no text / too long / bad JSON, 401 wrong token, 404 / 405, 413 body over 16 KB, 502 TTS failed.
+
 ## Encoder: knob service
 
 `src/knob.py` is a separate process that owns the encoder, the ring, the volume and the UPS battery. Volume and the ring
@@ -113,6 +133,7 @@ utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (s
 | `knob.py` | knob service: encoder → volume / wake word on-off / interrupt / battery bar, owns the ring, UPS battery (CW2015 + GPIO4), unix socket for the assistant |
 | `leds.py` | `Ring`: modes `off/greet/listen/think/think_long/speak/error`, 25 FPS animation thread, overlays for the knob feedback; backends `pi` / `console` (Mac) / `off` |
 | `audio_io.py` | `Mic` (arecord / ffmpeg avfoundation on the Mac), `Player` (queue), `LoopPlayer` (looping background) |
+| `api.py` | `/say` HTTP API for other agents (bearer token), runs inside the assistant |
 | `controls.py` | `KnobLink` — the assistant's side of the knob socket (acts as its ring and button); `InterruptButton` — GPIO23 directly / Enter on the Mac |
 | `hermes.py` | streaming Hermes client (stdlib, SSE) |
 | `voice.py` | Groq/xAI STT and TTS, `api_key()` (environment or `.env` in the root); written by a separate session |
@@ -142,7 +163,7 @@ encoder callbacks (pigpio), socket accept + one reader per client.
 `.env` in the project root — copy [`.env.example`](https://github.com/Flopsstuff/raspidr/blob/main/.env.example), every
 variable is explained there. It is gitignored and shipped to the Pi by `deploy.sh` (mode 600):
 `PI_HOST`, `PI_DIR` (deploy target), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `GROQ_API_KEY`,
-`XAI_API_KEY` (also used by the training scripts). No hosts or addresses are hardcoded anywhere else.
+`XAI_API_KEY` (also used by the training scripts), `RASPIDR_API_TOKEN`, `RASPIDR_API_PORT` (the `/say` API). No hosts or addresses are hardcoded anywhere else.
 
 Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microphone), `--no-wake`,
 `--leds knob|pi|console|off` (Pi default `knob`), `--gate-db 8` (0 — wake word models on every frame),

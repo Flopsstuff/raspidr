@@ -12,6 +12,9 @@ Interrupt an answer: encoder button (Pi) / Enter (Mac).
 
 On the Pi the ring and the encoder belong to the knob service (src/knob.py, --leds knob): ring modes go to it,
 a short press interrupts, a long press switches the wake word off — the microphone (arecord) is closed until it's back on.
+
+Other agents can make it speak: POST /say with a bearer token (src/api.py, RASPIDR_API_TOKEN in .env). The text is
+spoken once the speaker is free (ANNOUNCE state, "speak" on the ring), also while the wake word is off.
 """
 import os
 
@@ -35,6 +38,7 @@ from types import SimpleNamespace
 import numpy as np
 from openwakeword.vad import VAD
 
+import api
 import hermes
 import voice
 from audio_io import FRAME, RATE, LoopPlayer, Mic, Player
@@ -144,7 +148,7 @@ def tts_groq_once(text):
 
 class Assistant:
     MODES = {"idle": "off", "greet": "greet", "listen": "listen", "think": "think", "speak": "speak",
-             "error": "error"}
+             "announce": "speak", "error": "error"}
 
     def __init__(self, args):
         self.args = args
@@ -161,6 +165,8 @@ class Assistant:
         self.history, self.last_turn = [], 0.0
         self.state, self.state_t = "idle", time.time()
         self.job = None
+        self.announcements = queue.Queue()  # /say requests waiting for the speaker to be free
+        self.announce = None  # the one being spoken
 
     # ------------------------------------------------------------ helpers
 
@@ -182,6 +188,8 @@ class Assistant:
     def interrupt(self):
         if self.job:
             self.job.cancel.set()
+        if self.announce:
+            self.announce.cancel.set()
         self.loop.stop()
         self.player.stop()
         self.log("[STOP] перебили")
@@ -238,6 +246,17 @@ class Assistant:
         finally:
             job.done.set()
 
+    def synth(self, chunk, tag):
+        """One chunk → WAV bytes: Groq in a single attempt, on any error (429 included) — xAI."""
+        t = time.time()
+        try:
+            audio, prov = tts_groq_once(chunk), "groq"
+        except Exception as e:
+            self.log(f"[{tag}] groq: {str(e)[:80]} → xai")
+            audio, prov = voice.tts(chunk, provider="xai", voice=self.args.xai_voice), "xai"
+        self.log(f"[{tag} {prov} {time.time() - t:.1f}s] {chunk}")
+        return audio
+
     def _tts_worker(self, job, q):
         n = 0
         while True:
@@ -245,19 +264,13 @@ class Assistant:
             if chunk is None or job.cancel.is_set():
                 return
             n += 1
-            t = time.time()
             try:
-                audio, prov = tts_groq_once(chunk), "groq"
+                audio = self.synth(chunk, f"TTS#{n}")
             except Exception as e:
-                self.log(f"[TTS#{n}] groq: {str(e)[:80]} → xai")
-                try:
-                    audio, prov = voice.tts(chunk, provider="xai", voice=self.args.xai_voice), "xai"
-                except Exception as e2:
-                    job.error = e2
-                    return
+                job.error = e
+                return
             if job.cancel.is_set():
                 return
-            self.log(f"[TTS#{n} {prov} {time.time() - t:.1f}s] {chunk}")
             self.player.enqueue(audio)
             job.spoke.set()
 
@@ -289,6 +302,70 @@ class Assistant:
             return True
         return False
 
+    # ------------------------------------------------------------ /say: speak on request (src/api.py)
+
+    def say(self, text):
+        """Called from an HTTP thread: synthesize the text chunk by chunk and hand it to the main loop, which starts
+        playing with the first chunk once the speaker is free. → number of chunks; raises if nothing got synthesized."""
+        chunker = Chunker()
+        chunks = chunker.feed(text) + chunker.flush()
+        if not chunks:
+            raise ValueError("нечего озвучивать")
+        job = SimpleNamespace(audio=queue.Queue(), done=threading.Event(), cancel=threading.Event(),
+                              synthesized=0, error=None)
+        self.announcements.put(job)
+        try:
+            for n, chunk in enumerate(chunks, 1):
+                if job.cancel.is_set():
+                    break
+                job.audio.put(self.synth(chunk, f"SAY#{n}"))
+                job.synthesized += 1
+        except Exception as e:
+            job.error = e
+            if not job.synthesized:
+                raise
+        finally:
+            job.done.set()
+        return len(chunks)
+
+    def start_announce(self):
+        """IDLE: take the next /say request, if any. True — started."""
+        try:
+            self.announce = self.announcements.get_nowait()
+        except queue.Empty:
+            return False
+        self.set_state("announce")
+        return True
+
+    def pump_announce(self):
+        """ANNOUNCE: move synthesized chunks to the player. True — finished (state is IDLE or ERROR)."""
+        job = self.announce
+        while True:
+            try:
+                self.player.enqueue(job.audio.get_nowait())
+            except queue.Empty:
+                break
+        if not job.done.is_set() or not job.audio.empty() or self.player.busy():
+            return False
+        if job.error:
+            self.log(f"[SAY] ошибка: {job.error}")
+        self.set_state("error" if job.error and not job.synthesized else "idle")
+        return True
+
+    def announce_muted(self):
+        """The wake word is off (the microphone loop isn't running): /say still speaks."""
+        if not self.start_announce():
+            return
+        while not self.pump_announce():
+            if self.button.event.is_set():
+                self.button.event.clear()
+                self.interrupt()
+                return
+            time.sleep(0.05)
+        if self.state == "error":
+            time.sleep(1.0)
+            self.set_state("idle")
+
     # ------------------------------------------------------------ run modes
 
     def run_text(self, text):
@@ -307,8 +384,8 @@ class Assistant:
         while True:
             if not self.button.awake.is_set():
                 self.log("[MUTE] wake word и микрофон выключены")
-                while not self.button.awake.wait(0.5):
-                    pass
+                while not self.button.awake.wait(0.2):
+                    self.announce_muted()
                 self.log("[MUTE] снова слушаю")
             self.listen(model, feats, vad)
 
@@ -366,6 +443,8 @@ class Assistant:
                         self.log(f"[LISTEN] продолжение разговора — жду {a.followup_timeout:g} с")
                         start_listen(a.followup_timeout)
                         continue
+                    if followup_at is None and self.start_announce():  # a /say request, the speaker is free
+                        continue
                     fed = gate(frame) if gate else [frame]
                     for f in fed:
                         feats(f)
@@ -414,6 +493,10 @@ class Assistant:
                             # pause so the tail of our own voice from the speaker doesn't get recorded
                             followup_at = now + a.followup_delay
 
+                elif self.state == "announce":
+                    if self.pump_announce() and self.state == "idle":
+                        mute_until = now + a.mute_after  # don't wake up on our own voice
+
                 elif self.state == "error":
                     if now - self.state_t > 1.0:
                         self.set_state("idle")
@@ -427,6 +510,26 @@ class Assistant:
         self.button.close()
         if self.ring is not self.button:
             self.ring.close()
+
+
+def start_api(bot):
+    try:
+        token = voice.api_key("RASPIDR_API_TOKEN")
+    except RuntimeError:
+        token = ""
+    if not token:  # an empty token would let "Authorization: Bearer " in
+        bot.log("[API] RASPIDR_API_TOKEN не задан — /say выключен")
+        return
+    try:
+        port = int(voice.api_key("RASPIDR_API_PORT"))
+    except RuntimeError:
+        port = api.DEFAULT_PORT
+    try:
+        api.start(bot.say, bot.log, token, port)
+    except OSError as e:
+        bot.log(f"[API] порт {port} недоступен: {e}")
+        return
+    bot.log(f"[API] POST /say на порту {port}")
 
 
 def main():
@@ -469,6 +572,7 @@ def main():
         if args.text:
             bot.run_text(args.text)
         else:
+            start_api(bot)
             bot.run()
     except KeyboardInterrupt:
         pass

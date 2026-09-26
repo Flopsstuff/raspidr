@@ -25,6 +25,7 @@ architecture, hardware quirks and wake word training are documented there.
 .venv/bin/python src/assistant.py --text "Привет"   # Mac: Hermes + TTS without a microphone
 ./deploy.sh [--install] [--restart] [--logs]        # sync to the Pi / raspidr.sh install / restart / follow journal
 ./raspidr.sh install|uninstall|start|stop|restart|status|logs   # on the Pi: systemd units raspidr-knob, raspidr-assistant
+curl -H "Authorization: Bearer $RASPIDR_API_TOKEN" --data-binary 'Текст' http://$PI_HOST:8765/say   # speak via the API
 npm run docs:dev                                     # docs preview
 ```
 

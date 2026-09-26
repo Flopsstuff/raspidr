@@ -1,6 +1,7 @@
 # AGENTS.md
 
 Guidance for AI coding agents working in this repository.
+`CLAUDE.md` and `GEMINI.md` are symlinks to this file.
 
 ## What this is
 

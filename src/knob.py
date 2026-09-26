@@ -44,6 +44,7 @@ EDGES_PER_STEP = 4  # one detent = a full quadrature cycle
 LONG_PRESS_S = 0.8
 DOUBLE_CLICK_S = 0.4
 BATTERY_POLL_S = 30
+GAUGE_TRIES, GAUGE_RETRY_S = 5, 0.06  # the gauge drops ~1 read in 3 in a regular rhythm; a retry gets through
 LOW_ON, LOW_OFF = 15.0, 18.0  # % — low battery indicator with hysteresis
 TICK_GAP_S = 0.15
 CARD = "wm8960soundcard"
@@ -96,7 +97,8 @@ class Volume:
 
 
 class Gauge:
-    """CW2015 fuel gauge on the UPS-Lite. read() → percent or None when the board doesn't answer (pogo pins)."""
+    """CW2015 fuel gauge on the UPS-Lite. read() → percent or None when the board doesn't answer.
+    Single reads fail often (EIO in a regular ~0.25 s rhythm, likely I2C clock stretching), so each read is retried."""
 
     def __init__(self):
         import smbus
@@ -108,15 +110,22 @@ class Gauge:
         raw = self.bus.read_word_data(CW2015, reg)
         return struct.unpack("<H", struct.pack(">H", raw))[0]  # the gauge is big-endian
 
+    def _read_once(self):
+        if self.ok is None and self.bus.read_byte_data(CW2015, 0x0A) & 0xC0:
+            self.bus.write_byte_data(CW2015, 0x0A, 0x00)  # asleep → wake (no quick-start: keeps its estimate)
+        return min(100.0, self._word(0x04) / 256), self._word(0x02) * 0.305 / 1000
+
     def read(self):
-        try:
-            if self.ok is None and self.bus.read_byte_data(CW2015, 0x0A) & 0xC0:
-                self.bus.write_byte_data(CW2015, 0x0A, 0x00)  # asleep → wake (no quick-start: keeps its estimate)
-            soc = min(100.0, self._word(0x04) / 256)
-            volts = self._word(0x02) * 0.305 / 1000
-        except OSError as e:
+        for attempt in range(GAUGE_TRIES):
+            try:
+                soc, volts = self._read_once()
+                break
+            except OSError as e:
+                err = e
+                time.sleep(GAUGE_RETRY_S)
+        else:
             if self.ok is not False:
-                log(f"[BAT] UPS не отвечает ({e}) — переставь плату (pogo-пины)")
+                log(f"[BAT] UPS не отвечает ({GAUGE_TRIES} попыток: {err}) — проверь плату UPS (pogo-пины)")
             self.ok = False
             return None
         if not self.ok:
@@ -252,11 +261,12 @@ class Knob:
         self.gauge = Gauge()
         self.soc, self.low = None, False
         self.charging = self.encoder.charging()
+        self.battery_now = threading.Event()  # poll right away (charger plugged in/out)
         self.server = Server(KNOB_SOCKET, self.on_line, self.wake_line, lambda: self.ring.set_mode("off"))
         log(f"[KNOB] громкость {self.volume.level + 1}/{len(LEVELS)}, wake word "
             + ("вкл" if self.awake else "ВЫКЛ") + f", сокет {KNOB_SOCKET}; питание: "
             + ("зарядка" if self.charging else "батарея"))
-        self.poll_battery()
+        threading.Thread(target=self._battery_loop, daemon=True).start()
 
     def wake_line(self):
         return "wake on" if self.awake else "wake off"
@@ -287,6 +297,13 @@ class Knob:
                 self.tick, self.tick_t = play("tick_up" if delta > 0 else "tick_down"), time.time()
         log(f"[KNOB] громкость {level + 1}/{len(LEVELS)}" + ("" if moved else " — предел"))
 
+    def _battery_loop(self):
+        """Own thread: a gauge read with retries takes up to ~0.3 s, the main loop must keep polling the button."""
+        while True:
+            self.poll_battery()
+            self.battery_now.wait(BATTERY_POLL_S)
+            self.battery_now.clear()
+
     def poll_battery(self):
         self.soc = self.gauge.read()
         low = self.soc is not None and not self.charging and self.soc < (LOW_OFF if self.low else LOW_ON)
@@ -315,11 +332,11 @@ class Knob:
         self.ring.overlay(lambda t: power_frame(charging, t))
         play("power_on" if charging else "power_off")
         log("[BAT] зарядка подключена" if charging else "[BAT] зарядка отключена — на батарее")
-        self.poll_battery()
+        self.battery_now.set()
 
     def run(self):
         pressed_at, fired, low = None, False, 0
-        last_click, battery_t = 0.0, time.time()
+        last_click = 0.0
         while True:
             time.sleep(0.02)
             now = time.time()
@@ -345,9 +362,6 @@ class Knob:
                 self.turn(1 if steps > 0 else -1)
             if self.encoder.take_power_flips():
                 self.power_changed()
-            if now - battery_t >= BATTERY_POLL_S:
-                battery_t = now
-                self.poll_battery()
 
     def close(self):
         self.server.close()

@@ -10,7 +10,9 @@ Procedural sounds for the speaker (no third-party samples).
 light echo. The file is seamless: note tails at the end wrap around to the start — it can be looped.
 
 Knob: the same marimba timbre. wake_off — two notes down (G5 → C5), wake_on — two notes up (C5 → G5),
-tick_up / tick_down — short clicks after a volume step, bump — dull low knock at the end of the volume range.
+tick_up / tick_down — short clicks after a volume step, bump — dull low knock at the end of the volume range,
+battery — one soft note with the charge bar, battery_low — two low notes down once the charge gets low,
+power_on / power_off — quick three-note arpeggio up / down when the charger is plugged in / out.
 """
 import argparse
 import os
@@ -71,13 +73,17 @@ def sequence(parts, gain_db):
 
 
 def knob(gain_db):
-    c5, g5 = 523.25, 783.99
+    c4, e4, c5, e5, g5 = 261.63, 329.63, 523.25, 659.25, 783.99
     return {
         "wake_off": sequence([(0.0, note(g5, 0.6)), (0.14, note(c5, 0.7))], gain_db),
         "wake_on": sequence([(0.0, note(c5, 0.6)), (0.14, note(g5, 0.7))], gain_db),
         "tick_up": sequence([(0.0, click(1567.98))], gain_db - 4),
         "tick_down": sequence([(0.0, click(1174.66))], gain_db - 4),
         "bump": sequence([(0.0, click(196.0, 0.15)), (0.0, 0.3 * click(392.0, 0.08))], gain_db),
+        "battery": sequence([(0.0, note(e5, 0.7))], gain_db - 3),
+        "battery_low": sequence([(0.0, note(e4, 0.6)), (0.2, note(c4, 0.8))], gain_db - 2),
+        "power_on": sequence([(0.0, note(c5, 0.5)), (0.09, note(e5, 0.5)), (0.18, note(g5, 0.7))], gain_db),
+        "power_off": sequence([(0.0, note(g5, 0.5)), (0.09, note(e5, 0.5)), (0.18, note(c5, 0.7))], gain_db),
     }
 
 

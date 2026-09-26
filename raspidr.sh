@@ -54,7 +54,7 @@ install_deps() {
 install_units() {
   # MemoryMax: past it the kernel reclaims/kills inside the unit instead of dragging the whole Pi into swap
   # (works only with the memory cgroup on — see enable_memory_cgroup)
-  write_unit raspidr-knob "RaspiDR knob: encoder, LED ring, volume" knob.py \
+  write_unit raspidr-knob "RaspiDR knob: encoder, LED ring, volume, battery" knob.py \
     "After=pigpiod.service wm8960-soundcard.service
 Wants=pigpiod.service" "MemoryMax=48M"
   # XDG_RUNTIME_DIR: the assistant stops the user's PulseAudio (it grabs the sound card) via systemctl --user

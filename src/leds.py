@@ -15,7 +15,10 @@ Knob feedback is drawn as an overlay on top of any mode (Ring.overlay):
     wake_off_frame — warm red ring goes out LED by LED backwards: wake word and microphone are off
     wake_on_frame  — cool white LEDs light up one by one forward, then fade: listening again
     volume_frame   — level bar (green → yellow), half brightness = half a step; the edge blinks at the limit
+    battery_frame  — charge bar, red (empty) → green (full)
+    power_frame    — charger plugged in: green fills the ring from LED 0 both ways; unplugged: amber drains back
     MUTED_DOT      — dim red center while the wake word is off
+    Ring.set_badge — a steady color on one outer LED on top of everything (low battery: amber on LED 0)
 
 Backends: "pi" — NeoPixel over SPI (board.D10), "console" — the ring as a terminal line (Mac), "off" — nothing.
 """
@@ -28,7 +31,11 @@ import time
 MODES = ("off", "greet", "listen", "think", "think_long", "speak", "error")
 OFF = (0, 0, 0)
 MUTED_DOT = (160, 0, 0)
+LOW_BATTERY = (255, 70, 0)
+BADGE_LED = 0  # outer LED for the badge
 VOLUME_HOLD_S = 1.5
+BATTERY_HOLD_S = 2.5
+FILL_ORDER = ((0,), (1, 5), (2, 4), (3,))  # from LED 0 around both sides to the opposite one
 
 
 def _rgb(h, s, v):
@@ -101,6 +108,32 @@ def volume_frame(level, levels, t, bump=False):
     return out
 
 
+def battery_frame(soc, t):
+    """Charge bar for soc 0..100, t seconds after the double click. None after the hold and fade-out."""
+    if t >= BATTERY_HOLD_S + 0.4:
+        return None
+    fade = _clip((BATTERY_HOLD_S + 0.4 - t) / 0.4) * _clip(t / 0.15)
+    hue = 0.33 * _clip(soc / 100)
+    return [_rgb(hue, 1.0, _clip(soc / 100 * 6 - i) ** 2 * fade) for i in range(6)]
+
+
+def power_frame(plugged, t):
+    """Charger plugged in: green fills the ring group by group; unplugged: a full amber ring drains group by group.
+    None when done (1.2 s)."""
+    if t >= 1.2:
+        return None
+    step = 0.12
+    out = [OFF] * 6
+    for k, group in enumerate(FILL_ORDER):
+        if plugged:
+            v = _clip((t - k * step) / step) * _clip((1.2 - t) / 0.4)
+        else:
+            v = _clip(t / 0.1) * _clip((0.3 + (len(FILL_ORDER) - 1 - k) * step + step - t) / step)
+        for i in group:
+            out[i] = _rgb(0.33 if plugged else 0.08, 1.0, v)
+    return out
+
+
 class Ring:
     FPS = 25
     FADE_S = 0.4
@@ -113,6 +146,7 @@ class Ring:
         self.mode_start = time.time()
         self.until = None  # auto-return to off (for wake())
         self.over = None  # (frame_fn, start): knob feedback on top of the mode
+        self.badge = None  # steady color on BADGE_LED on top of everything
         self.status = OFF  # center — only for test hints
         self.last = [OFF] * 7
         self.fade_from = [OFF] * 7
@@ -153,6 +187,11 @@ class Ring:
         with self.lock:
             self.over = (frame_fn, time.time())
 
+    def set_badge(self, color):
+        """A steady color on BADGE_LED over any animation (None — off)."""
+        with self.lock:
+            self.badge = color
+
     def set_status(self, color):
         with self.lock:
             self.status = color
@@ -175,7 +214,7 @@ class Ring:
                 self.fade_from = list(self.last)
                 self.mode, self.mode_start, self.until = "off", now, None
             mode, t, status, fade_from = self.mode, now - self.mode_start, self.status, self.fade_from
-            over = self.over
+            over, badge = self.over, self.badge
         if mode == "error" and t >= 0.9:
             self.set_mode("off")
         if mode == "off":
@@ -188,10 +227,14 @@ class Ring:
         if over:
             frame = over[0](now - over[1])
             if frame is not None:
-                return [status] + frame
-            with self.lock:
-                if self.over is over:
-                    self.over = None
+                outer = frame
+            else:
+                with self.lock:
+                    if self.over is over:
+                        self.over = None
+        if badge:
+            outer = list(outer)
+            outer[BADGE_LED] = tuple(max(a, b) for a, b in zip(outer[BADGE_LED], badge))
         return [status] + outer
 
     def _draw_console(self, frame):

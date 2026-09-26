@@ -163,7 +163,12 @@ UPS-Lite V1.3 board with a CW2015 fuel gauge.
   - Quick-start: `write_word_data(0x62, 0x0A, 0x30)` on initialization.
 - **GPIO4 = power-good**: `HIGH` means external power (micro-USB on the UPS) is connected, `LOW` means running on
   battery. Verified both ways, including with `w1-gpio` loaded on the same pin.
-- Battery on 2026-09-26: ~95–97%.
+- Battery on 2026-09-26: ~95–97% in the morning; 85% (3.96 V, on battery) in the evening, after a reboot the gauge
+  answered again with the board untouched.
+- MODE `0x0A`: bits `0xC0` = sleep (readings freeze). `knob.py` wakes the gauge with `0x00` if it finds it asleep;
+  it doesn't quick-start (`0x30`), which would throw away the gauge's learned estimate. `hwtest.py ups` does quick-start.
+- RaspiDR reads it in `src/knob.py` every 30 s and watches GPIO4 (pigpio callback, 50 ms glitch filter); see
+  [architecture.md](architecture.md#encoder-knob-service).
 
 ⚠️ The main known issue is **the contact of the signal pogo pins**. Power still gets through (the Pi
 runs on battery), but `0x62` isn't visible on the bus (`Errno 121 / EIO`, `i2cdetect` is empty). Software and

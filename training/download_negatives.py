@@ -12,6 +12,7 @@ import argparse
 import ast
 import os
 import sys
+import urllib.error
 import urllib.request
 
 BASE = "https://huggingface.co/datasets/davidscripka/openwakeword_features/resolve/main/"
@@ -28,7 +29,15 @@ def fetch(url, dst, start=0, end=None):
     rng = f"bytes={start + have}-" + (str(end - 1) if end is not None else "")
     req = urllib.request.Request(url, headers={"Range": rng})
     total = (end - start) if end is not None else None
-    with urllib.request.urlopen(req) as r, open(dst, "ab") as f:
+    try:
+        r = urllib.request.urlopen(req)
+    except urllib.error.HTTPError as e:
+        # a whole-file download (end=None) that is already complete: the range starts at EOF → 416
+        if e.code == 416 and end is None and have:
+            print(f"  {os.path.basename(dst)}: уже скачан ({have / 1e9:.2f} GB)")
+            return
+        raise
+    with r, open(dst, "ab") as f:
         if total is None:
             total = have + int(r.headers.get("Content-Length", 0))
         done = have

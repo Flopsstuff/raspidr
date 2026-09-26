@@ -17,7 +17,7 @@ wake word training: [wakeword_training.md](wakeword_training.md).
  │   src/assistant.py — state machine                           │        ┌─ cloud ──────────────────────────┐
  │   Player / LoopPlayer ─ aplay (dmix) ─ TPA3118 speakers      │ HTTPS  │ Groq: STT whisper-large-v3-turbo │
  │   ↕ unix socket (ring modes / press, wake on|off)            │ ─────► │       TTS orpheus-v1 (troy)      │
- │   src/knob.py — encoder (pigpiod), leds.Ring (SPI), amixer   │        │ xAI:  TTS (fallback, leo)        │
+ │   src/knob.py — encoder (pigpiod), leds.Ring (SPI), amixer   │        │ xAI:  TTS (fallback, rex)        │
  └──────────────────────────────────────────────────────────────┘        │                                  │
  Mac (development): code, wake word training, deploy.sh → rsync          └──────────────────────────────────┘
 ```
@@ -95,7 +95,7 @@ don't run. Also running: `arecord` ~8% (48 → 16 kHz resampling in ALSA), `pigp
 utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (strips «…», «—», Whisper subtitle credits)
   → hermes.stream_chat(system + history + question)
   → Chunker: first sentence immediately, then merged up to ~100–180 chars, long ones split at a comma
-  → TTS worker: Groq Orpheus, single attempt; 429/error → straight to xAI (leo)
+  → TTS worker: Groq Orpheus, single attempt; 429/error → straight to xAI (rex — a clearly different voice, so the switch is audible)
   → Player (WAV queue, aplay one at a time)
 ```
 
@@ -147,7 +147,7 @@ variable is explained there. It is gitignored and shipped to the Pi by `deploy.s
 Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microphone), `--no-wake`,
 `--leds knob|pi|console|off` (Pi default `knob`), `--gate-db 8` (0 — wake word models on every frame),
 `--threshold`, `--listen-timeout 5`, `--followup-timeout 5`, `--no-followup`, `--end-silence 0.9`,
-`--long-think 5`, `--think-sound-delay 1`, `--think-sound ""` (no drops), `--xai-voice leo`, `--mic-device`.
+`--long-think 5`, `--think-sound-delay 1`, `--think-sound ""` (no drops), `--xai-voice rex`, `--mic-device`.
 
 ## Development and deployment
 

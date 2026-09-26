@@ -457,7 +457,7 @@ def main():
                    help="sound looped while thinking (empty — no sound)")
     p.add_argument("--think-sound-delay", type=float, default=1.0, help="s of thinking before the sound starts")
     p.add_argument("--long-think", type=float, default=5.0, help="s without an answer before saying 'one sec' (sounds/wait)")
-    p.add_argument("--xai-voice", default="leo", help="xAI voice to use when Groq TTS hits its rate limit")
+    p.add_argument("--xai-voice", default="rex", help="xAI voice to use when Groq TTS hits its rate limit (distinct from Groq troy)")
     p.add_argument("--keep-pulseaudio", action="store_true")
     args = p.parse_args()
 

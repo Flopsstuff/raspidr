@@ -20,7 +20,9 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
 import argparse
+import collections
 import glob
+import math
 import random
 import signal
 import subprocess
@@ -58,6 +60,64 @@ class NpzModel:
             x = np.maximum(x, 0)
         z = float((x @ self.w3.T + self.b3)[0, 0])
         return 1 / (1 + np.exp(-z))
+
+
+def fast_features(framework):
+    """openWakeWord features with a short raw-audio buffer. The stock one keeps 10 s and copies all of it into a
+    Python list on every frame (~16 ms of the ~45 ms per frame on the Pi), while only the last frame + 480 samples
+    are used. Needs frames of exactly FRAME samples."""
+    feats = AudioFeatures(inference_framework=framework)
+    feats.raw_data_buffer = collections.deque(maxlen=FRAME + 480)
+    return feats
+
+
+class QuietGate:
+    """Skips wake word inference while it's quiet. Frames below the noise floor + margin_db go to a short pre-roll
+    instead of the model; the first loud frame releases the pre-roll, so the model still sees the pause before the
+    phrase and its onset, and the gate stays open for hold_s after the last loud frame. The floor follows the noise
+    down fast and up slowly (~0.3 dB/s), so a steady fan or hum closes the gate again.
+
+    gate(frame) → the frames to feed into the features now (empty while quiet). seen / fed count frames for stats."""
+
+    def __init__(self, margin_db=8.0, hold_s=1.5, preroll_s=2.0, min_dbfs=-65.0):
+        frame_s = FRAME / RATE
+        self.margin = 10 ** (margin_db / 20)
+        self.min_rms = 32768 * 10 ** (min_dbfs / 20)
+        self.hold = int(hold_s / frame_s)
+        self.pending = collections.deque(maxlen=int(preroll_s / frame_s))
+        self.floor = None
+        self.left = 0  # frames the gate stays open
+        self.seen = self.fed = 0
+
+    def __call__(self, frame):
+        self.seen += 1
+        rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+        if self.floor is None or rms < self.floor:
+            self.floor = rms if self.floor is None else 0.8 * self.floor + 0.2 * rms
+        else:
+            self.floor *= 1.003
+        if rms > max(self.floor * self.margin, self.min_rms):
+            self.left = self.hold
+        elif self.left > 0:
+            self.left -= 1
+        else:
+            self.pending.append(frame)
+            return []
+        out = list(self.pending) + [frame]
+        self.pending.clear()
+        self.fed += len(out)
+        return out
+
+    def floor_dbfs(self):
+        return 20 * math.log10(max(self.floor or 1.0, 1.0) / 32768)
+
+    def is_open(self):
+        return self.left > 0
+
+    def close(self):
+        """Not listening for the wake word (dialog in progress): drop the pre-roll, next loud frame reopens."""
+        self.pending.clear()
+        self.left = 0
 
 
 def ts():

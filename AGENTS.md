@@ -23,7 +23,8 @@ architecture, hardware quirks and wake word training are documented there.
 
 ```bash
 .venv/bin/python src/assistant.py --text "Привет"   # Mac: Hermes + TTS without a microphone
-./deploy.sh [--install] [--restart] [--logs]        # sync to the Pi / deps / restart knob + assistant / follow logs
+./deploy.sh [--install] [--restart] [--logs]        # sync to the Pi / raspidr.sh install / restart / follow journal
+./raspidr.sh install|uninstall|start|stop|restart|status|logs   # on the Pi: systemd units raspidr-knob, raspidr-assistant
 npm run docs:dev                                     # docs preview
 ```
 

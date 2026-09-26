@@ -33,7 +33,6 @@ import urllib.request
 from types import SimpleNamespace
 
 import numpy as np
-from openwakeword.utils import AudioFeatures
 from openwakeword.vad import VAD
 
 import hermes
@@ -41,9 +40,11 @@ import voice
 from audio_io import FRAME, RATE, LoopPlayer, Mic, Player
 from controls import InterruptButton, KnobLink
 from leds import Ring
-from wakeword import ROOT, Greeter, NpzModel, free_sound_card, resolve_model
+from wakeword import ROOT, Greeter, NpzModel, QuietGate, fast_features, free_sound_card, resolve_model
 
 FRAME_S = FRAME / RATE
+FRESH_FRAMES = 24  # frames fed since the features went stale before scoring: 16 model frames + ~0.6 s of melspec context
+GATE_LOG_S = 300  # how often to log how much of the waiting time the wake word models actually ran
 HISTORY_PAIRS = 3  # how many question/answer pairs to remember
 HISTORY_TTL = 300  # seconds of silence before the history is reset
 
@@ -299,7 +300,7 @@ class Assistant:
     def run(self):
         a = self.args
         model = NpzModel(resolve_model(a.model, a.framework))
-        feats = AudioFeatures(inference_framework=a.framework)
+        feats = fast_features(a.framework)
         vad = VAD()
         self.log(f"[RUN] модель {model.name}, порог {a.threshold}; перебить — "
                  + ("Enter" if sys.platform == "darwin" else "кнопка энкодера"))
@@ -309,14 +310,16 @@ class Assistant:
                 while not self.button.awake.wait(0.5):
                     pass
                 self.log("[MUTE] снова слушаю")
-                feats.reset()  # don't let audio from before the pause into the model
             self.listen(model, feats, vad)
 
     def listen(self, model, feats, vad):
-        """Microphone loop; returns when the wake word gets switched off (the microphone is closed)."""
+        """Microphone loop; returns when the wake word gets switched off (the microphone is closed).
+        The wake word models only run in IDLE and only while the QuietGate lets sound through."""
         a = self.args
         mic = Mic(a.mic_device)
-        n, streak, mute_until = 0, 0, 0.0
+        gate = QuietGate(margin_db=a.gate_db) if a.gate_db > 0 else None
+        fresh, streak, mute_until = 0, 0, 0.0  # fresh: frames fed since the features went stale
+        gate_log_t = time.time()
         followup_at = None  # when to start listening for a follow-up after the answer
         preroll, rec, speech, silence = collections.deque(maxlen=4), [], False, 0.0
 
@@ -335,8 +338,6 @@ class Assistant:
                     if self.state != "idle" or followup_at is not None:
                         self.interrupt()
                     return
-                n += 1
-                feats(frame)
                 now = time.time()
                 if self.button.event.is_set():
                     self.button.event.clear()
@@ -346,19 +347,39 @@ class Assistant:
                         mute_until = now + 1.0
                         continue
 
+                if gate and now - gate_log_t >= GATE_LOG_S:
+                    if gate.seen:
+                        self.log(f"[GATE] за {GATE_LOG_S // 60} мин ожидания модель считала {gate.fed / gate.seen:.0%} "
+                                 f"кадров, фон {gate.floor_dbfs():.0f} dBFS")
+                    gate.seen = gate.fed = 0
+                    gate_log_t = now
+
+                if self.state != "idle":
+                    # a dialog: nothing is fed, the features keep the wake phrase — don't score them again
+                    fresh = 0
+                    if gate:
+                        gate.close()
+
                 if self.state == "idle":
                     if followup_at is not None and now >= followup_at:
                         followup_at = None
                         self.log(f"[LISTEN] продолжение разговора — жду {a.followup_timeout:g} с")
                         start_listen(a.followup_timeout)
                         continue
+                    fed = gate(frame) if gate else [frame]
+                    for f in fed:
+                        feats(f)
+                    fresh += len(fed)
                     if now < mute_until:
                         streak = 0
                         continue
                     if a.no_wake:
                         start_listen(a.listen_timeout)
                         continue
-                    score = model(feats.get_features(16)) if n > 5 else 0.0
+                    if not fed:  # quiet: the models didn't run
+                        streak = 0
+                        continue
+                    score = model(feats.get_features(16)) if fresh >= FRESH_FRAMES else 0.0
                     streak = streak + 1 if score >= a.threshold else 0
                     if streak >= a.patience:
                         streak = 0
@@ -414,6 +435,8 @@ def main():
     p.add_argument("--model", default="hey_peedor")
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--patience", type=int, default=2)
+    p.add_argument("--gate-db", type=float, default=8.0,
+                   help="run the wake word only on sound this many dB above the noise floor (0 — always)")
     p.add_argument("--framework", choices=("tflite", "onnx"), default="tflite" if linux else "onnx")
     p.add_argument("--sounds", default=os.path.join(ROOT, "sounds", "greetings"))
     p.add_argument("--leds", choices=("knob", "pi", "console", "off"), default="knob" if linux else "console",

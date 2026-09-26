@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deploy RaspiDR to the Pi. Host and directory come from .env (PI_HOST, PI_DIR — see .env.example).
 #   ./deploy.sh             sync code, models and sounds
-#   ./deploy.sh --install   + install/update Python dependencies in .venv on the Pi
-#   ./deploy.sh --restart   + restart the knob service and the assistant in the background (logs: knob.log,
-#                             assistant.log on the Pi)
-#   ./deploy.sh --logs      only follow both logs (no sync)
+#   ./deploy.sh --install   + raspidr.sh install on the Pi: Python dependencies, systemd units (enable + start)
+#   ./deploy.sh --restart   + raspidr.sh restart: restart the knob and the assistant units
+#   ./deploy.sh --logs      only follow the journal of both units (no sync)
+# On the Pi itself: ./raspidr.sh install | uninstall | start | stop | restart | status | logs [-f]
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -f .env ]]; then
@@ -34,24 +34,11 @@ if (( !logs || install || restart )); then
 fi
 
 if (( install )); then
-  ssh "$HOST" "cd $DIR && { [ -d .venv ] || python3 -m venv --system-site-packages .venv; } \
-    && .venv/bin/pip install -q -r requirements.txt \
-    && .venv/bin/python -c 'import openwakeword.utils as u; u.download_models()' >/dev/null 2>&1"
-  echo "dependencies on $HOST updated"
-fi
-
-if (( restart )); then
-  # the knob first: it owns the ring and the encoder; the assistant (re)connects to it on its own
-  for app in knob assistant; do
-    # the pattern must not match this ssh command's own command line — hence [k]nob, [a]ssistant
-    pat="python -u src/[${app:0:1}]${app:1}.py"
-    ssh "$HOST" "pkill -f '$pat'; for i in 1 2 3 4 5; do pgrep -f '$pat' >/dev/null || break; sleep 1; done"
-    # -n and local redirects: the backgrounded ssh must not hold this script's stdout (hangs pipes like `| tail`)
-    ssh -f -n "$HOST" "cd $DIR && setsid nohup .venv/bin/python -u src/$app.py > $app.log 2>&1 < /dev/null &" >/dev/null 2>&1
-  done
-  echo "knob and assistant restarted on $HOST (./deploy.sh --logs to follow)"
+  ssh "$HOST" "cd $DIR && ./raspidr.sh install"
+elif (( restart )); then
+  ssh "$HOST" "cd $DIR && ./raspidr.sh restart && ./raspidr.sh status"
 fi
 
 if (( logs )); then
-  ssh "$HOST" "cd $DIR && tail -n 30 -f knob.log assistant.log"
+  ssh "$HOST" "cd $DIR && ./raspidr.sh logs -f"
 fi

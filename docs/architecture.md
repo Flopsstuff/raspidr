@@ -26,7 +26,7 @@ wake word training: [wakeword_training.md](wakeword_training.md).
 
 | State | What happens | Ring (center off — it's the knob's mute dot; brightness 0.06) | Sound |
 |---|---|---|---|
-| IDLE | waiting for the wake word (score ≥ 0.5 for two consecutive frames) | off | — |
+| IDLE | waiting for the wake word (score ≥ 0.5 for two consecutive frames); the models only run on sound (see below) | off | — |
 | GREET | greeting; the microphone is not listened to | fast white comet | `sounds/greetings/*.wav` (random, never the same one twice in a row) |
 | LISTEN | recording the utterance: Silero VAD, end = 0.9 s of silence, max 12 s, 0.3 s of pre-roll | rainbow comet | — |
 | THINK | Groq STT → Hermes (streaming) | amber breathing | after 1 s, looping "drops" (`sounds/think/drops.wav`) |
@@ -68,6 +68,22 @@ knob → assistant:  wake on | wake off   (right after connecting and on every t
 When the assistant disconnects, the ring goes to `off`. `assistant.py --leds pi` drives the ring and the button directly
 (no knob service); `wakeword.py` and `tools/hwtest.py` also drive the ring directly, so stop the knob before running them.
 
+### Wake word CPU
+
+openWakeWord costs ~27 ms of CPU per 80 ms frame on the Pi (embedding model 21 ms, melspectrogram 4 ms, our MLP 2 ms),
+so the assistant saves it where it can:
+
+- `wakeword.fast_features` — the stock `AudioFeatures` keeps 10 s of raw audio and copies all of it into a Python list
+  on every frame (16 ms per frame); a buffer of one frame + 480 samples gives the same features.
+- `wakeword.QuietGate` — in IDLE the models only run on sound at least `--gate-db 8` dB above the adaptive noise floor,
+  plus 2 s of pre-roll before it and 1.5 s after. On the live recordings detection is the same as without the gate (15/15).
+- Outside IDLE the models don't run at all; back in IDLE a score is computed only after 24 fresh frames, so the features
+  that still hold the wake phrase can't fire it again.
+- Every 5 minutes the log says how much of the waiting time the models ran and the noise floor (`[GATE] …`).
+
+Measured with people in the room: assistant 53% → 34% of a core, whole system 17% → 12% of 4 cores; in silence the models
+don't run. Also running: `arecord` ~8% (48 → 16 kHz resampling in ALSA), `pigpiod` ~4.5%, `knob.py` ~2%.
+
 ### Response pipeline
 
 ```
@@ -108,8 +124,10 @@ encoder callbacks (pigpio), socket accept + one reader per client.
 
 - ALSA `default` = asym: capture via `dsnoop`, playback via `dmix` (`/etc/wm8960-soundcard/asound.conf`), so
   the microphone and several players work simultaneously.
-- PulseAudio (socket-activated user service) grabs the card → `Device or resource busy` and a volume reset.
-  On startup `assistant.py` runs `systemctl --user stop pulseaudio.socket pulseaudio.service` (`--keep-pulseaudio` leaves it alone).
+- PulseAudio (socket-activated user service) grabs the card → `Device or resource busy`, a volume reset, and a
+  microphone that records pure zeros. It starts on every ssh login, so `raspidr.sh install` masks it for the user
+  (note in `~/PULSEAUDIO_DISABLED.txt`, `raspidr.sh uninstall` unmasks). `assistant.py` also stops it on startup
+  (`--keep-pulseaudio` leaves it alone).
 - The mixer is saved in `/etc/wm8960-soundcard/wm8960_asound.state`: `Speaker` 127, `Speaker AC/DC` 5, `DATSEL=1`
   (the only working microphone is recorded to both channels). The knob changes `Speaker` at runtime.
 - WAVs from Groq/xAI and the greetings are written as a "stream", with a garbage length in the header; duration is computed from the file size.
@@ -122,7 +140,7 @@ variable is explained there. It is gitignored and shipped to the Pi by `deploy.s
 `XAI_API_KEY` (also used by the training scripts). No hosts or addresses are hardcoded anywhere else.
 
 Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microphone), `--no-wake`,
-`--leds knob|pi|console|off` (Pi default `knob`),
+`--leds knob|pi|console|off` (Pi default `knob`), `--gate-db 8` (0 — wake word models on every frame),
 `--threshold`, `--listen-timeout 5`, `--followup-timeout 5`, `--no-followup`, `--end-silence 0.9`,
 `--long-think 5`, `--think-sound-delay 1`, `--think-sound ""` (no drops), `--xai-voice leo`, `--mic-device`.
 
@@ -134,14 +152,34 @@ Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microp
 .venv/bin/python src/assistant.py --no-wake          # Mac microphone via ffmpeg
 
 ./deploy.sh              # rsync to $PI_HOST:~/$PI_DIR (without .git, .venv*, training, hey-peedor, recordings)
-./deploy.sh --install    # + Python dependencies into .venv on the Pi
-./deploy.sh --restart    # + restart knob.py and assistant.py in the background (no systemd yet)
-./deploy.sh --logs       # follow knob.log and assistant.log on the Pi
+./deploy.sh --install    # + raspidr.sh install on the Pi
+./deploy.sh --restart    # + raspidr.sh restart
+./deploy.sh --logs       # follow the journal of both services
 ```
 
-Caution when restarting by hand: `pkill -f "…assistant.py"` in the same ssh command as other mentions of
-`assistant.py` kills the ssh session itself, because the pattern matches its command line. `deploy.sh --restart`
-uses `[a]ssistant` / `[k]nob` and a separate ssh call.
+On the Pi both processes run as systemd units, `raspidr-knob` and `raspidr-assistant` (`User=` the deploying user,
+`Restart=always`, started at boot after `pigpiod` and `wm8960-soundcard`). `raspidr.sh` in the project root manages them
+and is shipped with the code:
+
+```bash
+./raspidr.sh install     # .venv + requirements, write /etc/systemd/system/raspidr-*.service, enable and start
+./raspidr.sh uninstall   # stop, disable, remove the units (.venv and ~/.config/raspidr stay)
+./raspidr.sh start | stop | restart | status
+./raspidr.sh logs [-f]   # journalctl -u raspidr-knob -u raspidr-assistant
+./raspidr.sh journal     # only the journal settings (also part of install)
+```
+
+Memory limits: `MemoryMax=320M` for the assistant and `48M` for the knob, so a runaway process is reclaimed or killed
+inside its unit instead of dragging the whole Pi into swap (once this hung the Pi: Wi-Fi dropped, only a power cycle
+helped). The Raspberry Pi firmware disables the memory cgroup (`cgroup_disable=memory`), so `install` appends
+`cgroup_enable=memory` to `/boot/firmware/cmdline.txt` (backup `cmdline.txt.bak`); it takes effect after a reboot.
+
+The journal is kept on disk (`/etc/systemd/journald.conf.d/raspidr.conf` overrides Raspberry Pi OS's `Storage=volatile`):
+at most 1 month (`MaxRetentionSec`, weekly files) and 64 MB, so the logs survive a hang and a power cycle.
+
+Caution when killing by hand: `pkill -f "…assistant.py"` in the same ssh command as other mentions of
+`assistant.py` kills the ssh session itself, because the pattern matches its command line. `raspidr.sh` uses
+`[a]ssistant` / `[k]nob` when it stops copies started outside systemd.
 
 ## Measurements (2026-09-26)
 
@@ -156,9 +194,11 @@ uses `[a]ssistant` / `[k]nob` and a separate ssh call.
 
 ## Known issues and next steps
 
-- No systemd service: after a Pi reboot the knob and the assistant have to be started manually.
 - Groq TTS free tier: 10 requests/min; when the limit is hit we fall back to xAI (a different voice).
 - Only one of the two microphones works (hardware issue), recording is mono; see hardware.md.
 - UPS-Lite: the signal pogo pins lose contact after disassembly; the charge can't be read until the board is reseated.
 - The wake word model sometimes triggers on «хэй пират», «хэй привет», «хэй, дорогой» ("hey pirate", "hey hi", "hey, dear"); see wakeword_training.md.
-- Memory: 204 MB; could be reduced by replacing Silero VAD (onnxruntime) with an energy-based detector.
+- Memory: 164–204 MB; could be reduced by replacing Silero VAD (onnxruntime) with an energy-based detector, or by moving
+  the wake word + VAD into a native service.
+- The encoder could be read by the kernel (`rotary-encoder` / `gpio-key` overlays) instead of `pigpiod` (~4.5% CPU),
+  but the UPS power-good GPIO4 also goes through pigpiod.

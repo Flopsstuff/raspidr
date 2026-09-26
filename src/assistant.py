@@ -8,6 +8,10 @@ Smart speaker voice assistant: «хэй пидор» → greeting → phrase unt
     .venv/bin/python src/assistant.py --no-wake                    # no wake word: listen for a phrase right away
 
 After an answer we immediately listen for the next phrase (no wake word); no phrase within --listen-timeout — go to sleep.
+
+A phrase is recorded in pieces: a pause of --segment-pause s sends the piece to STT in the background and listening goes
+on; only --end-silence s without speech after the last piece ends the phrase — the pieces' texts are joined and go to
+Hermes. So a pause for thought doesn't cut the phrase, and STT runs while we wait for the silence.
 Encoder button (Pi) / Enter (Mac): interrupts whatever is going on; when idle — starts listening, like the wake word
 (without the greeting).
 
@@ -49,6 +53,7 @@ from leds import Ring
 from wakeword import ROOT, Greeter, NpzModel, QuietGate, fast_features, free_sound_card, resolve_model
 
 FRAME_S = FRAME / RATE
+MIN_PIECE_S = 2.0  # a piece with less speech («а у нас», «и») isn't sent alone — it's glued to the next one
 FRESH_FRAMES = 24  # frames fed since the features went stale before scoring: 16 model frames + ~0.6 s of melspec context
 GATE_LOG_S = 300  # how often to log how much of the waiting time the wake word models actually ran
 HISTORY_PAIRS = 3  # how many question/answer pairs to remember
@@ -199,15 +204,70 @@ class Assistant:
 
     # ------------------------------------------------------------ answer: STT → Hermes → TTS
 
-    def start_answer(self, pcm=None, text=None):
+    def start_answer(self, pcm=None, text=None, pieces=None):
         self.job = SimpleNamespace(cancel=threading.Event(), done=threading.Event(), spoke=threading.Event(),
                                    error=None, long=False)
         self.set_state("think")
-        threading.Thread(target=self._answer, args=(self.job, pcm, text), daemon=True).start()
+        threading.Thread(target=self._answer, args=(self.job, pcm, text, pieces), daemon=True).start()
 
-    def _answer(self, job, pcm, text):
+    # ------------------------------------------------------------ STT of a phrase recorded in pieces
+
+    def stt_piece(self, pieces, pcm):
+        """Send one piece of the phrase to STT in the background. The previous piece's text, if it's ready, goes into
+        the prompt so Whisper continues the thought."""
+        prev = pieces[-1] if pieces else None
+        piece = SimpleNamespace(n=len(pieces) + 1, text=None, error=None, done=threading.Event())
+        pieces.append(piece)
+
+        def run():
+            prompt = "хэй пидор"
+            if prev is not None and prev.done.is_set() and prev.text:
+                prompt += " " + prev.text
+            t = time.time()
+            try:
+                for attempt in (1, 2):
+                    try:
+                        raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), f"piece{piece.n}.wav", lang="ru", prompt=prompt)
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            raise
+                        self.log(f"[STT#{piece.n}] {str(e)[:80]} — ещё раз")
+                piece.text = clean_stt(raw)
+                self.log(f"[STT#{piece.n} {time.time() - t:.1f}s] «{piece.text}»"
+                         + ("" if raw.strip() == piece.text else f"  (сырой: «{raw}»)"))
+            except Exception as e:
+                piece.error = e
+                self.log(f"[STT#{piece.n}] ошибка: {str(e)[:120]}")
+            finally:
+                piece.done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _collect(self, job, pieces, pcm):
+        """Answer thread: wait for all pieces and join their texts. If a piece failed — STT of the whole phrase.
+        None — cancelled."""
+        for piece in pieces:
+            while not piece.done.wait(0.1):
+                if job.cancel.is_set():
+                    return None
+        if any(p.error for p in pieces):
+            t = time.time()
+            text = clean_stt(voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор"))
+            self.log(f"[STT целиком {time.time() - t:.1f}s] «{text}»")
+            return text
+        text = " ".join(p.text for p in pieces if p.text)
+        if len(pieces) > 1:
+            self.log(f"[ФРАЗА {len(pieces)} кусков] «{text}»")
+        return text
+
+    def _answer(self, job, pcm, text, pieces=None):
         try:
-            if text is None:
+            if pieces is not None:
+                text = self._collect(job, pieces, pcm)
+                if not text:
+                    return
+            elif text is None:
                 t0 = time.time()
                 raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор")
                 text = clean_stt(raw)
@@ -409,16 +469,43 @@ class Assistant:
         button_listen_t = 0.0  # when a press started listening (a double click right after takes it back)
         gate_log_t = time.time()
         followup_at = None  # when to start listening for a follow-up after the answer
-        preroll, rec, speech, silence = collections.deque(maxlen=4), [], False, 0.0
+        # LISTEN: rec — the whole phrase since the first speech (fallback STT), seg — the current piece (None in a
+        # pause), carry — a too-short piece waiting to be glued to the next one, pieces — sent to STT
+        # 0.64 s before speech starts: right after reset_states() the VAD notices speech late and would eat a first
+        # short word («был такой…» came out as «такой…» with 0.32 s)
+        preroll = collections.deque(maxlen=8)
+        rec, seg, carry, pieces = [], None, [], []
+        speech, silence, seg_voiced = False, 0.0, 0.0
 
         listen_timeout = a.listen_timeout
 
         def start_listen(timeout):
-            nonlocal rec, speech, silence, listen_timeout
+            nonlocal rec, seg, carry, pieces, speech, silence, seg_voiced, listen_timeout
             vad.reset_states()
             preroll.clear()
-            rec, speech, silence, listen_timeout = [], False, 0.0, timeout
+            rec, seg, carry, pieces = [], None, [], []
+            speech, silence, seg_voiced, listen_timeout = False, 0.0, 0.0, timeout
             self.set_state("listen")
+
+        def close_piece():
+            """The current piece ends (a pause or the phrase's end): to STT, or keep it to glue to the next one."""
+            nonlocal seg, carry
+            if seg_voiced >= MIN_PIECE_S:
+                self.stt_piece(pieces, np.concatenate(seg))
+                carry = []
+            else:
+                carry = seg
+            seg = None
+
+        def finish_phrase(why):
+            nonlocal carry
+            if seg is not None:
+                close_piece()
+            if carry:  # the phrase ended on a short bit — send it too, clean_stt drops junk
+                self.stt_piece(pieces, np.concatenate(carry))
+                carry = []
+            self.log(f"[LISTEN] фраза {len(rec) * FRAME_S:.1f} с, кусков {len(pieces)}" + why)
+            self.start_answer(pcm=np.concatenate(rec), pieces=pieces)
 
         try:
             for frame in mic.frames():
@@ -494,20 +581,39 @@ class Assistant:
 
                 elif self.state == "listen":
                     p = vad.predict(frame)
+                    voice_now = p >= 0.5
                     if not speech:
                         preroll.append(frame)
-                        if p >= 0.5:
-                            speech, rec, silence = True, list(preroll), 0.0
+                        if voice_now:
+                            speech, rec, seg = True, list(preroll), list(preroll)
+                            silence, seg_voiced = 0.0, FRAME_S
+                            preroll.clear()
                         elif now - self.state_t > listen_timeout:
                             self.log("[LISTEN] тишина — не дождались фразы")
                             self.set_state("idle")
                             mute_until = now + 0.5
-                    else:
-                        rec.append(frame)
-                        silence = 0.0 if p >= 0.5 else silence + FRAME_S
-                        if silence >= a.end_silence or len(rec) * FRAME_S >= a.max_listen:
-                            self.log(f"[LISTEN] фраза {len(rec) * FRAME_S:.1f} с")
-                            self.start_answer(pcm=np.concatenate(rec))
+                        continue
+                    rec.append(frame)
+                    if seg is not None:  # inside a piece
+                        seg.append(frame)
+                        if voice_now:
+                            silence, seg_voiced = 0.0, seg_voiced + FRAME_S
+                        else:
+                            silence += FRAME_S
+                            if silence >= a.segment_pause:
+                                close_piece()
+                    else:  # a pause between pieces
+                        preroll.append(frame)
+                        if voice_now:  # the phrase goes on — a new piece (with the short one before, if any)
+                            seg, silence, seg_voiced = carry + list(preroll), 0.0, FRAME_S
+                            carry = []
+                            preroll.clear()
+                        else:
+                            silence += FRAME_S
+                    if silence >= a.end_silence:
+                        finish_phrase("")
+                    elif len(rec) * FRAME_S >= a.max_listen:
+                        finish_phrase(", упёрлись в --max-listen")
 
                 elif self.state in ("think", "speak"):
                     if self.poll_answer() and self.state == "idle":
@@ -575,8 +681,11 @@ def main():
     p.add_argument("--listen-timeout", type=float, default=5.0, help="s to wait for a phrase to start after the greeting")
     p.add_argument("--followup-timeout", type=float, default=5.0,
                    help="s to wait for the next phrase after an answer, then sleep")
-    p.add_argument("--end-silence", type=float, default=0.9, help="s of silence that end a phrase")
-    p.add_argument("--max-listen", type=float, default=12.0, help="s — maximum phrase length")
+    p.add_argument("--segment-pause", type=float, default=0.7,
+                   help="s of silence that close a piece of the phrase and send it to STT (listening goes on)")
+    p.add_argument("--end-silence", type=float, default=2.0,
+                   help="s without speech after the last piece that end the phrase (then it goes to Hermes)")
+    p.add_argument("--max-listen", type=float, default=30.0, help="s — maximum phrase length")
     p.add_argument("--no-followup", action="store_true", help="don't listen for a follow-up after an answer, go straight to sleep")
     p.add_argument("--followup-delay", type=float, default=0.4, help="s after an answer before listening starts")
     p.add_argument("--mute-after", type=float, default=1.5, help="s after an answer during which the wake word is ignored")

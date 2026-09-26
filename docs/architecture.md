@@ -60,6 +60,9 @@ curl -H "Authorization: Bearer $RASPIDR_API_TOKEN" -H 'Content-Type: application
 - It plays when the speaker is free: a dialog in progress (including the follow-up listening) is not interrupted.
   State ANNOUNCE, "speak" animation on the ring; the wake word is ignored for `--mute-after` afterwards. A short press
   cuts it off. With the wake word switched off it still speaks — only the microphone is off.
+- Afterwards, as after an answer, it listens for a reply for `--followup-timeout` (5 s) without the wake word, and the
+  spoken text goes into the dialog history as an assistant message — so a reply like «перенеси на четыре» reaches Hermes
+  with its context. `--no-followup` turns the listening off.
 - Errors: 400 no text / too long / bad JSON, 401 wrong token, 404 / 405, 413 body over 16 KB, 502 TTS failed.
 
 ## Encoder: knob service

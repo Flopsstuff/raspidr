@@ -14,7 +14,8 @@ On the Pi the ring and the encoder belong to the knob service (src/knob.py, --le
 a short press interrupts, a long press switches the wake word off — the microphone (arecord) is closed until it's back on.
 
 Other agents can make it speak: POST /say with a bearer token (src/api.py, RASPIDR_API_TOKEN in .env). The text is
-spoken once the speaker is free (ANNOUNCE state, "speak" on the ring), also while the wake word is off.
+spoken once the speaker is free (ANNOUNCE state, "speak" on the ring), also while the wake word is off. Afterwards,
+like after an answer, it listens for a reply for --followup-timeout s; the spoken text goes into the dialog history.
 """
 import os
 
@@ -311,7 +312,7 @@ class Assistant:
         chunks = chunker.feed(text) + chunker.flush()
         if not chunks:
             raise ValueError("нечего озвучивать")
-        job = SimpleNamespace(audio=queue.Queue(), done=threading.Event(), cancel=threading.Event(),
+        job = SimpleNamespace(text=text, audio=queue.Queue(), done=threading.Event(), cancel=threading.Event(),
                               synthesized=0, error=None)
         self.announcements.put(job)
         try:
@@ -349,6 +350,12 @@ class Assistant:
             return False
         if job.error:
             self.log(f"[SAY] ошибка: {job.error}")
+        if job.synthesized and not job.cancel.is_set():
+            # a reply to it goes to Hermes: let it know what the speaker just said
+            if time.time() - self.last_turn > HISTORY_TTL:
+                self.history = []
+            self.history = (self.history + [{"role": "assistant", "content": job.text}])[-2 * HISTORY_PAIRS:]
+            self.last_turn = time.time()
         self.set_state("error" if job.error and not job.synthesized else "idle")
         return True
 
@@ -496,6 +503,8 @@ class Assistant:
                 elif self.state == "announce":
                     if self.pump_announce() and self.state == "idle":
                         mute_until = now + a.mute_after  # don't wake up on our own voice
+                        if not a.no_followup:  # listen for a reply, as after an answer
+                            followup_at = now + a.followup_delay
 
                 elif self.state == "error":
                     if now - self.state_t > 1.0:

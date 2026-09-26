@@ -35,8 +35,9 @@ wake word training: [wakeword_training.md](wakeword_training.md).
 | ERROR | API failure | three red flashes | — |
 
 Transitions: IDLE → GREET → LISTEN → THINK → SPEAK → (0.4 s) LISTEN "conversation follow-up" → no utterance for 5 s → IDLE.
-After the greeting we also wait 5 s for an utterance. A short press of the encoder button (Enter on the Mac) at any time: stops
-sound, cancels the request, returns to IDLE. After any answer the wake word is ignored for another 1.5 s (model window ~1.3 s;
+After the greeting we also wait 5 s for an utterance. A short press of the encoder button (Enter on the Mac) while
+anything is going on: stops sound, cancels the request, returns to IDLE. In IDLE a short press starts LISTEN right away,
+like the wake word but without the greeting. After any answer the wake word is ignored for another 1.5 s (model window ~1.3 s;
 the speaker hears itself).
 
 MUTE: a long press switches the wake word off — the assistant interrupts whatever it was doing and closes the microphone
@@ -75,8 +76,8 @@ keep working while the assistant restarts or is down; the assistant reconnects o
 | turn | `Speaker` 94..127 in 24 steps (~1.4 dB, one per detent) | level bar green → yellow, 4 steps per LED, holds 1.5 s; the edge LED blinks at the limit | `tick_up` / `tick_down`, `bump` at the limit; none while the speaker is talking |
 | long press (0.8 s, fires while held) | wake word + microphone off | warm red ring goes out LED by LED backwards, then a **dim red center dot** while off | `wake_off`: two notes down |
 | long press again | back on | cool white LEDs light up one by one forward and fade | `wake_on`: two notes up |
-| short press | "interrupt" for the assistant | — | — |
-| double click (within 0.4 s) | shows the battery charge; the first click still interrupts right away | charge bar red (empty) → green (full), holds 2.5 s | `battery`: one soft note |
+| short press | assistant busy — interrupt; idle — start listening without the wake word | (the assistant's own animations) | — |
+| double click (within 0.4 s) | shows the battery charge; the first click still goes out as a press right away, the second as `double`, which drops the listening the first one started | charge bar red (empty) → green (full), holds 2.5 s | `battery`: one soft note |
 | battery below 15%, not charging | stays until above 18% or the charger is plugged in | **steady** amber LED 0 on top of everything | `battery_low`: two low notes, once |
 | charger plugged in / out (GPIO4) | — | green fills the ring from LED 0 both ways / a full amber ring drains back | `power_on` / `power_off`: three notes up / down |
 
@@ -91,6 +92,7 @@ Protocol — unix socket `KNOB_SOCKET` (default `/tmp/raspidr-knob.sock`), one t
 assistant → knob:  mode off|greet|listen|think|think_long|speak|error
 knob → assistant:  wake on | wake off   (right after connecting and on every toggle)
                    press                (short press)
+                   double               (second click of a double click)
 ```
 
 When the assistant disconnects, the ring goes to `off`. `assistant.py --leds pi` drives the ring and the button directly

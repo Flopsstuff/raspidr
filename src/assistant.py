@@ -8,7 +8,8 @@ Smart speaker voice assistant: «хэй пидор» → greeting → phrase unt
     .venv/bin/python src/assistant.py --no-wake                    # no wake word: listen for a phrase right away
 
 After an answer we immediately listen for the next phrase (no wake word); no phrase within --listen-timeout — go to sleep.
-Interrupt an answer: encoder button (Pi) / Enter (Mac).
+Encoder button (Pi) / Enter (Mac): interrupts whatever is going on; when idle — starts listening, like the wake word
+(without the greeting).
 
 On the Pi the ring and the encoder belong to the knob service (src/knob.py, --leds knob): ring modes go to it,
 a short press interrupts, a long press switches the wake word off — the microphone (arecord) is closed until it's back on.
@@ -386,14 +387,16 @@ class Assistant:
         model = NpzModel(resolve_model(a.model, a.framework))
         feats = fast_features(a.framework)
         vad = VAD()
-        self.log(f"[RUN] модель {model.name}, порог {a.threshold}; перебить — "
-                 + ("Enter" if sys.platform == "darwin" else "кнопка энкодера"))
+        self.log(f"[RUN] модель {model.name}, порог {a.threshold}; "
+                 + ("Enter" if sys.platform == "darwin" else "кнопка энкодера") + " — перебить или начать слушать")
         while True:
             if not self.button.awake.is_set():
                 self.log("[MUTE] wake word и микрофон выключены")
                 while not self.button.awake.wait(0.2):
                     self.announce_muted()
                 self.log("[MUTE] снова слушаю")
+                self.button.event.clear()  # presses while the microphone was off don't start listening now
+                self.button.double.clear()
             self.listen(model, feats, vad)
 
     def listen(self, model, feats, vad):
@@ -403,6 +406,7 @@ class Assistant:
         mic = Mic(a.mic_device)
         gate = QuietGate(margin_db=a.gate_db) if a.gate_db > 0 else None
         fresh, streak, mute_until = 0, 0, 0.0  # fresh: frames fed since the features went stale
+        button_listen_t = 0.0  # when a press started listening (a double click right after takes it back)
         gate_log_t = time.time()
         followup_at = None  # when to start listening for a follow-up after the answer
         preroll, rec, speech, silence = collections.deque(maxlen=4), [], False, 0.0
@@ -429,6 +433,18 @@ class Assistant:
                         followup_at = None
                         self.interrupt()
                         mute_until = now + 1.0
+                    else:
+                        self.log("[BTN] нажатие — слушаю без wake word")
+                        start_listen(a.listen_timeout)
+                        button_listen_t = now
+                    continue
+                if self.button.double.is_set():
+                    self.button.double.clear()
+                    if self.state == "listen" and not speech and now - button_listen_t < 1.0:
+                        # it was a double click (battery), not a request to listen
+                        self.log("[BTN] двойной клик — не слушаю")
+                        self.set_state("idle")
+                        mute_until = now + 0.5
                         continue
 
                 if gate and now - gate_log_t >= GATE_LOG_S:

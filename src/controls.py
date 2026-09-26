@@ -19,7 +19,8 @@ class KnobLink:
 
     def __init__(self, path=KNOB_SOCKET):
         self.path = path
-        self.event = threading.Event()  # short press → interrupt
+        self.event = threading.Event()  # short press: interrupt when busy, listen when idle
+        self.double = threading.Event()  # second click of a double click (the knob shows the battery)
         self.awake = threading.Event()  # wake word and microphone on (long press toggles)
         self.awake.set()
         self.mode = "off"
@@ -81,6 +82,8 @@ class KnobLink:
     def _handle(self, line):
         if line == "press":
             self.event.set()
+        elif line == "double":
+            self.double.set()
         elif line == "wake on":
             self.awake.set()
         elif line == "wake off":
@@ -101,6 +104,7 @@ class InterruptButton:
 
     def __init__(self):
         self.event = threading.Event()
+        self.double = threading.Event()  # never set: no double click here
         self.awake = threading.Event()
         self.awake.set()
         self.pi = self.cb = None

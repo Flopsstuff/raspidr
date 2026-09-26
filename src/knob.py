@@ -8,8 +8,9 @@ next to the assistant, so volume and the ring keep working while the assistant r
     turn        — volume (`Speaker` 94..127, 24 steps): tick sound + level bar on the ring
     long press  — wake word and microphone off / on: two notes down / up + ring animation; while off — red center dot.
                   The state survives restarts (~/.config/raspidr/knob.json)
-    short press — "interrupt" for the assistant
-    double click — charge bar on the ring + a note (the first click still interrupts right away)
+    short press — for the assistant: interrupt when it's busy, start listening (no wake word needed) when idle
+    double click — charge bar on the ring + a note; the first click is sent right away as a press, the second as
+                   "double" (the assistant drops the listening the first one started)
 
 Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 30 s:
     below 15% on battery — a steady amber LED + two low notes once; off above 18% or on the charger
@@ -17,7 +18,7 @@ Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 
 
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
     assistant → knob:  mode <leds mode>
-    knob → assistant:  wake on | wake off  (on connect and on every toggle), press
+    knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double
 """
 import json
 import os
@@ -346,12 +347,14 @@ class Knob:
                 pressed_at, fired = time.time(), False
             elif low == 0 and pressed_at is not None:
                 if not fired:
-                    log("[KNOB] нажатие → перебить")
-                    self.server.send("press")
                     if now - last_click <= DOUBLE_CLICK_S:
+                        log("[KNOB] двойной клик")
+                        self.server.send("double")
                         self.show_battery()
                         last_click = 0.0
                     else:
+                        log("[KNOB] нажатие")
+                        self.server.send("press")
                         last_click = now
                 pressed_at = None
             if pressed_at is not None and not fired and time.time() - pressed_at >= LONG_PRESS_S:

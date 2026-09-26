@@ -199,6 +199,8 @@ History: until 2025-09-30 there was a Waveshare UPS HAT (C) based on the INA219 
   `0001/0111/1110/1000` → CCW, `0010/1011/1101/0100` → CW. One click = one step.
   `pulses_per_rotation=80` is a nominal value for converting to degrees.
 - The button watchdog is disabled by default (`watchdog_ms=0`).
+- RaspiDR: `src/knob.py` decodes with a quadrature table (±1 per edge, 4 edges = one detent) and polls the button
+  every 20 ms (two low reads = pressed); see [architecture.md](architecture.md#encoder-knob-service).
 
 ## pigpiod
 

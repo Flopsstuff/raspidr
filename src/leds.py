@@ -10,6 +10,13 @@ Each stage of the voice loop has its own animation, running in a separate thread
     speak   — two blue dots moving toward each other: speaking
     error   — three red flashes, then off
 
+Knob feedback is drawn as an overlay on top of any mode (Ring.overlay):
+
+    wake_off_frame — warm red ring goes out LED by LED backwards: wake word and microphone are off
+    wake_on_frame  — cool white LEDs light up one by one forward, then fade: listening again
+    volume_frame   — level bar (green → yellow), half brightness = half a step; the edge blinks at the limit
+    MUTED_DOT      — dim red center while the wake word is off
+
 Backends: "pi" — NeoPixel over SPI (board.D10), "console" — the ring as a terminal line (Mac), "off" — nothing.
 """
 import colorsys
@@ -20,6 +27,8 @@ import time
 
 MODES = ("off", "greet", "listen", "think", "think_long", "speak", "error")
 OFF = (0, 0, 0)
+MUTED_DOT = (160, 0, 0)
+VOLUME_HOLD_S = 1.5
 
 
 def _rgb(h, s, v):
@@ -61,6 +70,37 @@ def outer_frame(mode, t):
     return [OFF] * 6
 
 
+def _clip(x):
+    return max(0.0, min(1.0, x))
+
+
+def wake_off_frame(t):
+    """Ring lights warm red, then LEDs go out one by one backwards. None when done (0.9 s)."""
+    if t >= 0.9:
+        return None
+    return [_rgb(0.01, 1.0, _clip(t / 0.1) * _clip((0.3 + (5 - i) * 0.1 - t) / 0.1)) for i in range(6)]
+
+
+def wake_on_frame(t):
+    """LEDs light up one by one forward, the full ring holds and fades. None when done (1.0 s)."""
+    if t >= 1.0:
+        return None
+    fade = _clip((1.0 - t) / 0.4)
+    return [_rgb(0.5, 0.35, _clip((t - i * 0.08) / 0.08) * fade) for i in range(6)]
+
+
+def volume_frame(level, levels, t, bump=False):
+    """Volume bar for level in 1..levels, t seconds after the last step. None after the hold and fade-out."""
+    if t >= VOLUME_HOLD_S + 0.4:
+        return None
+    fade = _clip((VOLUME_HOLD_S + 0.4 - t) / 0.4)
+    per = levels / 6
+    out = [_rgb(0.33 - 0.21 * i / 5, 1.0, _clip(level / per - i) ** 2 * fade) for i in range(6)]
+    if bump and t < 0.4 and int(t / 0.1) % 2 == 0:  # the limit: the edge LED blinks twice
+        out[max(0, math.ceil(level / per) - 1)] = OFF
+    return out
+
+
 class Ring:
     FPS = 25
     FADE_S = 0.4
@@ -72,6 +112,7 @@ class Ring:
         self.mode = "off"
         self.mode_start = time.time()
         self.until = None  # auto-return to off (for wake())
+        self.over = None  # (frame_fn, start): knob feedback on top of the mode
         self.status = OFF  # center — only for test hints
         self.last = [OFF] * 7
         self.fade_from = [OFF] * 7
@@ -107,6 +148,11 @@ class Ring:
         with self.lock:
             self.until = time.time() + seconds
 
+    def overlay(self, frame_fn):
+        """Draw frame_fn(t) instead of the mode's outer LEDs until it returns None."""
+        with self.lock:
+            self.over = (frame_fn, time.time())
+
     def set_status(self, color):
         with self.lock:
             self.status = color
@@ -129,6 +175,7 @@ class Ring:
                 self.fade_from = list(self.last)
                 self.mode, self.mode_start, self.until = "off", now, None
             mode, t, status, fade_from = self.mode, now - self.mode_start, self.status, self.fade_from
+            over = self.over
         if mode == "error" and t >= 0.9:
             self.set_mode("off")
         if mode == "off":
@@ -138,6 +185,13 @@ class Ring:
             outer = outer_frame(mode, t)
             if t < 0.15:  # soft fade-in
                 outer = [tuple(int(c * t / 0.15) for c in px) for px in outer]
+        if over:
+            frame = over[0](now - over[1])
+            if frame is not None:
+                return [status] + frame
+            with self.lock:
+                if self.over is over:
+                    self.over = None
         return [status] + outer
 
     def _draw_console(self, frame):

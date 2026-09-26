@@ -9,6 +9,9 @@ Smart speaker voice assistant: «хэй пидор» → greeting → phrase unt
 
 After an answer we immediately listen for the next phrase (no wake word); no phrase within --listen-timeout — go to sleep.
 Interrupt an answer: encoder button (Pi) / Enter (Mac).
+
+On the Pi the ring and the encoder belong to the knob service (src/knob.py, --leds knob): ring modes go to it,
+a short press interrupts, a long press switches the wake word off — the microphone (arecord) is closed until it's back on.
 """
 import os
 
@@ -36,7 +39,7 @@ from openwakeword.vad import VAD
 import hermes
 import voice
 from audio_io import FRAME, RATE, LoopPlayer, Mic, Player
-from controls import InterruptButton
+from controls import InterruptButton, KnobLink
 from leds import Ring
 from wakeword import ROOT, Greeter, NpzModel, free_sound_card, resolve_model
 
@@ -144,10 +147,12 @@ class Assistant:
 
     def __init__(self, args):
         self.args = args
-        self.ring = Ring(args.leds)
+        if args.leds == "knob":
+            self.ring = self.button = KnobLink()  # the knob service draws the ring and reads the encoder
+        else:
+            self.ring, self.button = Ring(args.leds), InterruptButton()
         self.player = Player()
         self.loop = LoopPlayer()  # "drops" while thinking
-        self.button = InterruptButton()
         self.greetings = Greeter(args.sounds).files
         self.waits = Greeter(args.wait_sounds).files
         self.think_sound = args.think_sound if args.think_sound and os.path.exists(args.think_sound) else None
@@ -296,9 +301,21 @@ class Assistant:
         model = NpzModel(resolve_model(a.model, a.framework))
         feats = AudioFeatures(inference_framework=a.framework)
         vad = VAD()
-        mic = Mic(a.mic_device)
         self.log(f"[RUN] модель {model.name}, порог {a.threshold}; перебить — "
                  + ("Enter" if sys.platform == "darwin" else "кнопка энкодера"))
+        while True:
+            if not self.button.awake.is_set():
+                self.log("[MUTE] wake word и микрофон выключены")
+                while not self.button.awake.wait(0.5):
+                    pass
+                self.log("[MUTE] снова слушаю")
+                feats.reset()  # don't let audio from before the pause into the model
+            self.listen(model, feats, vad)
+
+    def listen(self, model, feats, vad):
+        """Microphone loop; returns when the wake word gets switched off (the microphone is closed)."""
+        a = self.args
+        mic = Mic(a.mic_device)
         n, streak, mute_until = 0, 0, 0.0
         followup_at = None  # when to start listening for a follow-up after the answer
         preroll, rec, speech, silence = collections.deque(maxlen=4), [], False, 0.0
@@ -314,6 +331,10 @@ class Assistant:
 
         try:
             for frame in mic.frames():
+                if not self.button.awake.is_set():
+                    if self.state != "idle" or followup_at is not None:
+                        self.interrupt()
+                    return
                 n += 1
                 feats(frame)
                 now = time.time()
@@ -383,7 +404,8 @@ class Assistant:
         self.loop.stop()
         self.player.stop()
         self.button.close()
-        self.ring.close()
+        if self.ring is not self.button:
+            self.ring.close()
 
 
 def main():
@@ -394,7 +416,8 @@ def main():
     p.add_argument("--patience", type=int, default=2)
     p.add_argument("--framework", choices=("tflite", "onnx"), default="tflite" if linux else "onnx")
     p.add_argument("--sounds", default=os.path.join(ROOT, "sounds", "greetings"))
-    p.add_argument("--leds", choices=("pi", "console", "off"), default="pi" if linux else "console")
+    p.add_argument("--leds", choices=("knob", "pi", "console", "off"), default="knob" if linux else "console",
+                   help="knob — ring and encoder via src/knob.py; pi — drive the ring and the button directly")
     p.add_argument("--mic-device", help="ALSA device (Pi) or avfoundation microphone name (Mac)")
     p.add_argument("--text", help="no microphone: send this question straight to Hermes and speak the answer")
     p.add_argument("--no-wake", action="store_true", help="no wake word: listen for a phrase right away")

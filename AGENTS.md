@@ -12,7 +12,8 @@ architecture, hardware quirks and wake word training are documented there.
 ## Layout
 
 - `src/` — runs on the Pi. Entry point `src/assistant.py` (state machine: wake word → greeting → listen →
-  Groq STT → Hermes stream → Groq TTS). `src/wakeword.py` is also a standalone detector.
+  Groq STT → Hermes stream → Groq TTS). `src/knob.py` is a separate process that owns the encoder, the LED ring and
+  the volume; the assistant talks to it over a unix socket. `src/wakeword.py` is also a standalone detector.
 - `src/tools/` — hardware checks (`hwtest.py`), microphone probes, sample recorder, procedural sounds.
 - `training/` — wake word training (Mac only, Python 3.11 venv `.venv-train` with torch 2.2.2 and `numpy<2`).
 - `models/`, `sounds/` — binary assets tracked with Git LFS.
@@ -22,7 +23,7 @@ architecture, hardware quirks and wake word training are documented there.
 
 ```bash
 .venv/bin/python src/assistant.py --text "Привет"   # Mac: Hermes + TTS without a microphone
-./deploy.sh [--install] [--restart] [--logs]        # sync to the Pi / deps / restart / follow log
+./deploy.sh [--install] [--restart] [--logs]        # sync to the Pi / deps / restart knob + assistant / follow logs
 npm run docs:dev                                     # docs preview
 ```
 
@@ -41,4 +42,6 @@ There is no test suite; `src/tools/hwtest.py` is a manual hardware check on the 
 - Memory is tight: keep the assistant's RSS around 200 MB; no heavy processes.
 - PulseAudio grabs the sound card → `assistant.py` stops it on start; ALSA dmix/dsnoop share the device.
 - `numpy<2` on the Pi (tflite-runtime 2.14), `OPENBLAS_NUM_THREADS=1` (set in code) or CPU goes to ~300%.
-- Restarting by hand: `pkill -f` patterns must not match the ssh command line itself — use `[a]ssistant`.
+- Restarting by hand: `pkill -f` patterns must not match the ssh command line itself — use `[a]ssistant`, `[k]nob`.
+- The ring (SPI) and the encoder belong to `knob.py`; anything else that drives them directly (`wakeword.py`,
+  `hwtest.py`, `assistant.py --leds pi`) conflicts with it.

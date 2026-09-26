@@ -109,9 +109,9 @@ enable_memory_cgroup() {
 
 stop_all() {
   sudo systemctl stop "${UNITS[@]}" 2>/dev/null || true
-  # copies started by hand (nohup) would fight the units for the ring and the microphone;
+  # copies started by hand (nohup, with or without -u) would fight the units for the ring and the microphone;
   # [k]nob / [a]ssistant — so the pattern doesn't match a command line that contains it (ssh, this shell)
-  local pat="python -u src/([k]nob|[a]ssistant)\.py"
+  local pat="python[0-9.]* (-u )?src/([k]nob|[a]ssistant)\.py"
   pkill -f "$pat" || true
   for _ in 1 2 3 4 5; do
     pgrep -f "$pat" >/dev/null || break

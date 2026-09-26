@@ -146,6 +146,7 @@ utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (s
 | `tools/micmeter.py`, `tools/micprobe.py` | microphone levels on the ring; "which mic goes to which channel" |
 | `tools/record_samples.py` | records phrase samples, prompted by the ring → `recordings/` |
 | `tools/make_sounds.py` | procedural sounds (waiting drops, knob feedback) |
+| `tools/powerlog.py` | power draw from the battery: logs charge / volts / charger / CPU to a CSV, `report` turns stretches on battery into watts (≈, the gauge has no current sensor) |
 
 Threads in `assistant.py`: main (reads the microphone in 80 ms frames, never blocks), response (STT + Hermes),
 TTS worker, player, background player, knob socket. In `knob.py`: main (button polling 50 Hz, volume), ring animation,

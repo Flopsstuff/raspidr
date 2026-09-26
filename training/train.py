@@ -32,9 +32,10 @@ def load_acav(path, rows, rng):
     """Negatives kept in memory as float16 (all 1.3M windows ≈ 4 GB); rows=0 — take all."""
     a = np.load(path, mmap_mode="r")
     if rows and rows < len(a):
-        block = 5000
-        starts = np.sort(rng.choice(len(a) - block, size=rows // block, replace=False))
-        return torch.from_numpy(np.concatenate([a[s:s + block] for s in starts]))
+        block = min(5000, rows)  # contiguous blocks: random rows from a memmap would read the whole file
+        n = -(-rows // block)  # enough blocks to cover rows
+        starts = np.sort(rng.choice(len(a) - block, size=n, replace=False))
+        return torch.from_numpy(np.concatenate([a[s:s + block] for s in starts])[:rows])
     return torch.from_numpy(np.ascontiguousarray(a))
 
 

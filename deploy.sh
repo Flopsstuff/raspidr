@@ -26,6 +26,8 @@ for arg in "$@"; do
 done
 
 if (( !logs || install || restart )); then
+  # .env holds the API keys and the /say token; rsync -a carries its mode over to the Pi (and fixes an existing copy)
+  [[ -f .env ]] && chmod 600 .env
   rsync -az --itemize-changes \
     --exclude .git --exclude .github --exclude .venv --exclude .venv-train --exclude __pycache__ --exclude .DS_Store \
     --exclude hey-peedor --exclude recordings --exclude training --exclude node_modules \

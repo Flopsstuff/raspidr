@@ -1,0 +1,129 @@
+# Architecture: the RaspiDR voice assistant
+
+A speaker built on a Raspberry Pi Zero 2 W listens for «хэй пидор» ("hey peedor"), greets you, records the question,
+transcribes it with cloud STT, hands it to the Hermes LLM agent and speaks the answer chunk by chunk while it is still being generated.
+Each stage is shown by its own animation on the NeoPixel ring. Hardware: [hardware.md](hardware.md);
+wake word training: [wakeword_training.md](wakeword_training.md).
+
+## Components
+
+```
+ ┌──────────── Pi Zero 2 W  ($PI_HOST) ─────────────────────────┐        ┌─ LAN ────────────────────────────┐
+ │ WM8960 mic ─ arecord 16 kHz ─┐                               │        │ Hermes Agent (Nous Research)     │
+ │                              ▼                               │  HTTP  │ $HERMES_API_URL                  │
+ │   openWakeWord features (tflite) → hey_peedor.npz (numpy)    │ ─────► │ OpenAI-compatible, SSE stream    │
+ │   Silero VAD (onnxruntime) — end of utterance                │        └──────────────────────────────────┘
+ │   src/assistant.py — state machine                           │        ┌─ cloud ──────────────────────────┐
+ │   Player / LoopPlayer ─ aplay (dmix) ─ TPA3118 speakers      │ HTTPS  │ Groq: STT whisper-large-v3-turbo │
+ │   leds.Ring ─ NeoPixel 7× (SPI)   controls ─ button GPIO23   │ ─────► │       TTS orpheus-v1 (troy)      │
+ └──────────────────────────────────────────────────────────────┘        │ xAI:  TTS (fallback, leo)        │
+ Mac (development): code, wake word training, deploy.sh → rsync          └──────────────────────────────────┘
+```
+
+## Voice loop
+
+| State | What happens | Ring (center always off, brightness 0.06) | Sound |
+|---|---|---|---|
+| IDLE | waiting for the wake word (score ≥ 0.5 for two consecutive frames) | off | — |
+| GREET | greeting; the microphone is not listened to | fast white comet | `sounds/greetings/*.wav` (random, never the same one twice in a row) |
+| LISTEN | recording the utterance: Silero VAD, end = 0.9 s of silence, max 12 s, 0.3 s of pre-roll | rainbow comet | — |
+| THINK | Groq STT → Hermes (streaming) | amber breathing | after 1 s, looping "drops" (`sounds/think/drops.wav`) |
+| THINK (long) | Hermes > 5 s (accessing memory/tools) | spinning amber light | once «Секунду, смотрю…» ("One sec, looking…") (`sounds/wait/`), then drops again |
+| SPEAK | queue of TTS chunks | two blue dots moving toward each other | the answer |
+| ERROR | API failure | three red flashes | — |
+
+Transitions: IDLE → GREET → LISTEN → THINK → SPEAK → (0.4 s) LISTEN "conversation follow-up" → no utterance for 5 s → IDLE.
+After the greeting we also wait 5 s for an utterance. The encoder button (Enter on the Mac) at any time: stops sound, cancels
+the request, returns to IDLE. After any answer the wake word is ignored for another 1.5 s (model window ~1.3 s; the speaker hears itself).
+
+### Response pipeline
+
+```
+utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (strips «…», «—», Whisper subtitle credits)
+  → hermes.stream_chat(system + history + question)
+  → Chunker: first sentence immediately, then merged up to ~100–180 chars, long ones split at a comma
+  → TTS worker: Groq Orpheus, single attempt; 429/error → straight to xAI (leo)
+  → Player (WAV queue, aplay one at a time)
+```
+
+- **System prompt** (`assistant.SYSTEM_PROMPT`): in Russian, 1–3 sentences, no markdown/lists/emoji,
+  name «пидор», and never at the start of a sentence (Orpheus mangles the name at the start).
+- **History**: last 3 question–answer pairs; 5 minutes of silence resets it.
+- The first sentence is sent to TTS separately so that audio starts as early as possible.
+
+## Modules (`src/`)
+
+| File | What it does |
+|---|---|
+| `assistant.py` | main process: state machine, STT → Hermes → TTS pipeline, stage log with timings |
+| `wakeword.py` | `NpzModel` (custom numpy model), `resolve_model`, `Greeter`; run on its own, a detector without the assistant (`--test`, `--wav`) |
+| `leds.py` | `Ring`: modes `off/greet/listen/think/think_long/speak/error`, 25 FPS animation thread; backends `pi` / `console` (Mac) / `off` |
+| `audio_io.py` | `Mic` (arecord / ffmpeg avfoundation on the Mac), `Player` (queue), `LoopPlayer` (looping background) |
+| `controls.py` | "interrupt" button: GPIO23 via pigpiod / Enter on the Mac |
+| `hermes.py` | streaming Hermes client (stdlib, SSE) |
+| `voice.py` | Groq/xAI STT and TTS, `api_key()` (environment or `.env` in the root); written by a separate session |
+| `tools/hwtest.py` | checks all hardware (I2C, UPS, ring, encoder, speakers, microphones) |
+| `tools/micmeter.py`, `tools/micprobe.py` | microphone levels on the ring; "which mic goes to which channel" |
+| `tools/record_samples.py` | records phrase samples, prompted by the ring → `recordings/` |
+| `tools/make_sounds.py` | procedural sounds (waiting drops) |
+
+Threads in `assistant.py`: main (reads the microphone in 80 ms frames, never blocks), response (STT + Hermes),
+TTS worker, player, background player, ring animation, button callback (pigpio).
+
+## Audio on the Pi
+
+- ALSA `default` = asym: capture via `dsnoop`, playback via `dmix` (`/etc/wm8960-soundcard/asound.conf`), so
+  the microphone and several players work simultaneously.
+- PulseAudio (socket-activated user service) grabs the card → `Device or resource busy` and a volume reset.
+  On startup `assistant.py` runs `systemctl --user stop pulseaudio.socket pulseaudio.service` (`--keep-pulseaudio` leaves it alone).
+- The mixer is saved in `/etc/wm8960-soundcard/wm8960_asound.state`: `Speaker` 127, `Speaker AC/DC` 5, `DATSEL=1`
+  (the only working microphone is recorded to both channels).
+- WAVs from Groq/xAI and the greetings are written as a "stream", with a garbage length in the header; duration is computed from the file size.
+
+## Configuration
+
+`.env` in the project root — copy [`.env.example`](https://github.com/Flopsstuff/raspidr/blob/main/.env.example), every
+variable is explained there. It is gitignored and shipped to the Pi by `deploy.sh` (mode 600):
+`PI_HOST`, `PI_DIR` (deploy target), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `GROQ_API_KEY`,
+`XAI_API_KEY` (also used by the training scripts). No hosts or addresses are hardcoded anywhere else.
+
+Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microphone), `--no-wake`, `--leds pi|console|off`,
+`--threshold`, `--listen-timeout 5`, `--followup-timeout 5`, `--no-followup`, `--end-silence 0.9`,
+`--long-think 5`, `--think-sound-delay 1`, `--think-sound ""` (no drops), `--xai-voice leo`, `--mic-device`.
+
+## Development and deployment
+
+```bash
+# Mac: test without a microphone (sound via afplay, ring in the terminal)
+.venv/bin/python src/assistant.py --text "Привет, кто ты?"
+.venv/bin/python src/assistant.py --no-wake          # Mac microphone via ffmpeg
+
+./deploy.sh              # rsync to $PI_HOST:~/$PI_DIR (without .git, .venv*, training, hey-peedor, recordings)
+./deploy.sh --install    # + Python dependencies into .venv on the Pi
+./deploy.sh --restart    # + restart the assistant in the background (no systemd yet)
+./deploy.sh --logs       # follow assistant.log on the Pi
+```
+
+Caution when restarting by hand: `pkill -f "…assistant.py"` in the same ssh command as other mentions of
+`assistant.py` kills the ssh session itself, because the pattern matches its command line. `deploy.sh --restart`
+uses `[a]ssistant` and a separate ssh call.
+
+## Measurements (2026-09-26)
+
+| What | Value |
+|---|---|
+| Waiting for the wake word: assistant CPU / arecord / whole system | 59% of a core / 8% of a core / 18% of 4 cores |
+| Assistant memory (RSS) | 204 MB of 416 (~144 free) |
+| Groq STT for a 2–3 s utterance | 0.7–0.8 s |
+| Hermes: first token | 1.7–1.8 s (simple question), up to 61 s (accessing memory) |
+| Groq TTS per chunk | 0.7–1.5 s (long chunk up to 3 s) |
+| From end of utterance to the first sound of the answer | ~3–4 s for a simple question |
+
+## Known issues and next steps
+
+- No systemd service: after a Pi reboot the assistant has to be started manually.
+- Groq TTS free tier: 10 requests/min; when the limit is hit we fall back to xAI (a different voice).
+- Only one of the two microphones works (hardware issue), recording is mono; see hardware.md.
+- UPS-Lite: the signal pogo pins lose contact after disassembly; the charge can't be read until the board is reseated.
+- The wake word model sometimes triggers on «хэй пират», «хэй привет», «хэй, дорогой» ("hey pirate", "hey hi", "hey, dear"); see wakeword_training.md.
+- Memory: 204 MB; could be reduced by replacing Silero VAD (onnxruntime) with an energy-based detector.

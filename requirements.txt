@@ -1,0 +1,6 @@
+openwakeword>=0.6
+# tflite-runtime 2.14 (the only build for aarch64/py3.11) is built against numpy 1.x
+numpy<2; platform_machine == "aarch64"
+# NeoPixel ring over SPI — Pi only
+adafruit-blinka; platform_machine == "aarch64"
+adafruit-circuitpython-neopixel; platform_machine == "aarch64"

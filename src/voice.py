@@ -58,7 +58,7 @@ def api_key(name):
             k, _, v = line.strip().partition("=")
             if k == name:
                 return v.strip().strip("'\"")
-    raise RuntimeError(f"нет {name} (ни в окружении, ни в .env)")
+    raise RuntimeError(f"no {name} (neither in the environment nor in .env)")
 
 
 def request(provider, path, body, content_type):
@@ -82,7 +82,7 @@ def request(provider, path, body, content_type):
             # rate limit (Groq TTS free tier — 10 requests per minute): wait as long as asked and retry
             if e.code == 429 and attempt < 3:
                 wait = float(e.headers.get("retry-after") or 10)
-                print(f"{provider}: 429, жду {wait:.0f} с", file=sys.stderr)
+                print(f"{provider}: 429, waiting {wait:.0f} s", file=sys.stderr)
                 time.sleep(wait + 0.5)
                 continue
             raise RuntimeError(f"{provider} {path}: HTTP {e.code}: {err}") from None
@@ -156,7 +156,7 @@ def record(seconds, device="default"):
 def play(path):
     player = next((p for p in ("aplay", "afplay") if shutil.which(p)), None)
     if not player:
-        sys.exit("нечем проиграть: нет ни aplay, ни afplay")
+        sys.exit("nothing to play with: neither aplay nor afplay")
     subprocess.run([player, path], check=True)
 
 
@@ -190,7 +190,7 @@ def main():
             elif args.file:
                 audio, name = open(args.file, "rb").read(), os.path.basename(args.file)
             else:
-                p.error("нужен файл или --record SEC")
+                p.error("need a file or --record SEC")
             providers = ["groq", "xai"] if args.provider == "both" else [args.provider]
             for prov in providers:
                 t0 = time.monotonic()

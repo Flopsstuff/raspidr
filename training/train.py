@@ -118,7 +118,7 @@ def main():
     val_windows = torch.from_numpy(np.lib.stride_tricks.sliding_window_view(val, (16, 96))[:, 0].copy())
     n_val = len(val)
     print(f"pos {tuple(pos.shape)}, hard neg {tuple(hard.shape)}, acav {tuple(acav.shape)}, "
-          f"валидация {n_val * FRAME_S / 3600:.1f} ч ({time.time() - t0:.0f} с)", flush=True)
+          f"validation {n_val * FRAME_S / 3600:.1f} h ({time.time() - t0:.0f} s)", flush=True)
 
     model = make_model(args.hidden)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -151,19 +151,19 @@ def main():
             if score > best:
                 best, best_step = score, step
                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
-                mark = "  ← лучшая"
-            print(f"шаг {step:5d} loss {loss.item():.4f} | порог 0.5: живые {m['real']:.0%}, поймано {m['pos']:.0%}, "
-                  f"в шуме {m['noisy']:.0%}, "
-                  f"похожие {m['neg']:.0%}, ложных/ч {m['fph']:.2f}{mark} ({time.time() - t0:.0f} с)", flush=True)
+                mark = "  ← best"
+            print(f"step {step:5d} loss {loss.item():.4f} | threshold 0.5: live {m['real']:.0%}, caught {m['pos']:.0%}, "
+                  f"in noise {m['noisy']:.0%}, "
+                  f"similar {m['neg']:.0%}, false/h {m['fph']:.2f}{mark} ({time.time() - t0:.0f} s)", flush=True)
 
     model.load_state_dict(best_state)
     r = evaluate(model, sets, val_windows, n_val, real_mask)
-    print(f"\nлучшая модель — шаг {best_step}")
-    print(f"порог   живые({real_mask.sum()})  поймано   в шуме   похожие фразы   ложных в час")
+    print(f"\nbest model — step {best_step}")
+    print(f"thr     live({real_mask.sum()})   caught  in noise  similar phrases  false per hour")
     for thr, m in r.items():
         print(f"{thr:4.1f}    {m['real']:8.0%}   {m['pos']:6.0%}   {m['noisy']:6.0%}   {m['neg']:10.0%}      {m['fph']:8.2f}")
     export(model, args.name, {"step": best_step, "hidden": args.hidden})
-    print(f"сохранено: models/{args.name}.npz, models/{args.name}.onnx")
+    print(f"saved: models/{args.name}.npz, models/{args.name}.onnx")
 
 
 if __name__ == "__main__":

@@ -160,7 +160,7 @@ class Ring:
                 self.px = neopixel.NeoPixel(board.D10, 7, brightness=brightness, pixel_order=neopixel.GRB,
                                             auto_write=False)
             except Exception as e:
-                print(f"[LED] кольцо недоступно: {e}", file=sys.stderr)
+                print(f"[LED] ring unavailable: {e}", file=sys.stderr)
                 self.backend = "off"
         if self.backend == "off":
             return

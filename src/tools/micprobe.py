@@ -24,12 +24,12 @@ from micmeter import CHUNK, LEFT_LEDS, RATE, RIGHT_LEDS, dbfs, free_sound_card, 
 
 PAUSE_S = 2.0
 STAGES = [
-    ("говори, ничего не закрывая", (0, 255, 0)),
-    ("зажми LEFT и говори", (255, 180, 0)),
-    ("зажми RIGHT и говори", (160, 0, 255)),
-    ("зажми ОБА и говори", (255, 60, 0)),
-    ("скреби ногтем по LEFT", (0, 200, 255)),
-    ("скреби ногтем по RIGHT", (255, 255, 255)),
+    ("speak, nothing covered", (0, 255, 0)),
+    ("cover LEFT and speak", (255, 180, 0)),
+    ("cover RIGHT and speak", (160, 0, 255)),
+    ("cover BOTH and speak", (255, 60, 0)),
+    ("scratch LEFT with a nail", (0, 200, 255)),
+    ("scratch RIGHT with a nail", (255, 255, 255)),
 ]
 
 
@@ -48,7 +48,7 @@ def main():
     args = p.parse_args()
     stages = STAGES
     if args.alternate:
-        stages = [(("говори в LEFT", (0, 255, 0)), ("говори в RIGHT", (0, 0, 255)))[i % 2]
+        stages = [(("speak into LEFT", (0, 255, 0)), ("speak into RIGHT", (0, 0, 255)))[i % 2]
                   for i in range(args.alternate)]
 
     free_sound_card()
@@ -75,16 +75,16 @@ def main():
     recorded = array.array("h")
     results = []
     try:
-        print(f"Фон {PAUSE_S:g} с — молчи (красный)", flush=True)
+        print(f"Background {PAUSE_S:g} s — stay quiet (red)", flush=True)
         floor = ([], [])
         run_for(PAUSE_S, (255, 0, 0), lambda f, l, r: (floor[0].append(l), floor[1].append(r)))
         base_l, base_r = sorted(floor[0])[len(floor[0]) // 2], sorted(floor[1])[len(floor[1]) // 2]
-        print(f"   фон: L {base_l:.1f} dBFS, R {base_r:.1f} dBFS", flush=True)
+        print(f"   background: L {base_l:.1f} dBFS, R {base_r:.1f} dBFS", flush=True)
 
         for n, (what, color) in enumerate(stages, 1):
-            print(f"Пауза {PAUSE_S:g} с (красный), дальше этап {n}: {what}", flush=True)
+            print(f"Pause {PAUSE_S:g} s (red), then stage {n}: {what}", flush=True)
             run_for(PAUSE_S, (255, 0, 0), lambda f, l, r: recorded.extend(f))
-            print(f"Этап {n}: {what} — {args.seconds:g} с", flush=True)
+            print(f"Stage {n}: {what} — {args.seconds:g} s", flush=True)
             levels = ([], [])
 
             def on_chunk(f, l, r):
@@ -101,8 +101,8 @@ def main():
         rec.terminate()
         rec.wait()
 
-    print(f"\nФон: L {base_l:.1f} dBFS, R {base_r:.1f} dBFS")
-    print(f"{'этап':<34} {'L громко':>9} {'L пик':>7}   {'R громко':>9} {'R пик':>7}   (dBFS)")
+    print(f"\nBackground: L {base_l:.1f} dBFS, R {base_r:.1f} dBFS")
+    print(f"{'stage':<34} {'L loud':>9} {'L peak':>7}   {'R loud':>9} {'R peak':>7}   (dBFS)")
     for n, what, l90, lmax, r90, rmax in results:
         print(f"{n}. {what:<31} {l90:9.1f} {lmax:7.1f}   {r90:9.1f} {rmax:7.1f}")
 
@@ -111,7 +111,7 @@ def main():
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(recorded.tobytes())
-    print(f"\nСохранено: {args.out}. Воспроизведение (синий)...", flush=True)
+    print(f"\nSaved: {args.out}. Playback (blue)...", flush=True)
     try:
         px.fill((0, 0, 0))
         px[0] = (0, 0, 255)
@@ -123,8 +123,8 @@ def main():
         mags = sorted(abs(x) for x in right)
         peak = (mags[int(len(mags) * 0.999)] if mags else 0) or 1
         gain = min(32000 / peak, 1000)
-        print(f"Правый канал отдельно, усиление x{gain:.0f} ({20 * math.log10(gain):+.0f} dB), в обе колонки "
-              f"(светодиоды 4..6 фиолетовые)", flush=True)
+        print(f"Right channel alone, gain x{gain:.0f} ({20 * math.log10(gain):+.0f} dB), to both speakers "
+              f"(LEDs 4..6 purple)", flush=True)
         boosted = array.array("h")
         for x in right:
             v = max(-32768, min(32767, int(x * gain)))

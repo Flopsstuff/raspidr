@@ -163,8 +163,8 @@ def main():
                     + [p for p in gen_pos if is_test(p)] + [p for p in xai_pos if xai_is_test(p)])
     train_neg_src = [p for p in gen_neg if not is_test(p)] + [p for p in xai_neg if not xai_is_test(p)]
     test_neg_src = [p for p in gen_neg if is_test(p)] + [p for p in xai_neg if xai_is_test(p)]
-    print(f"позитивы: train источников {len(train_pos_src)}, test {len(test_pos_src)}; "
-          f"негативы TTS: train {len(train_neg_src)}, test {len(test_neg_src)}", flush=True)
+    print(f"positives: train sources {len(train_pos_src)}, test {len(test_pos_src)}; "
+          f"TTS negatives: train {len(train_neg_src)}, test {len(test_neg_src)}", flush=True)
 
     cache = {}
 
@@ -202,15 +202,15 @@ def main():
         train_neg.append(bg / (np.abs(bg).max() + 1e-9) * 10 ** (rng.uniform(-50, -15) / 20))
     test_neg = [place(augment_phrase(phrase(p), False), pool, 0.1, (40, 40)) for p in test_neg_src]
 
-    print(f"клипов: train_pos {len(train_pos)}, train_neg {len(train_neg)}, test_pos {len(test_pos)}, "
-          f"test_neg {len(test_neg)} ({time.time() - t0:.0f} с)", flush=True)
+    print(f"clips: train_pos {len(train_pos)}, train_neg {len(train_neg)}, test_pos {len(test_pos)}, "
+          f"test_neg {len(test_neg)} ({time.time() - t0:.0f} s)", flush=True)
 
     feats = AudioFeatures(inference_framework="onnx", ncpu=4)
     for name, clips in (("train_pos", train_pos), ("train_neg", train_neg), ("test_pos", test_pos),
                         ("test_pos_noisy", test_pos_noisy), ("test_neg", test_neg)):
         f = feats.embed_clips(to_i16(clips), batch_size=64, ncpu=4)[:, -16:, :].astype(np.float16)
         np.save(os.path.join(OUT, f"{name}.npy"), f)
-        print(f"  {name}: {f.shape} ({time.time() - t0:.0f} с)", flush=True)
+        print(f"  {name}: {f.shape} ({time.time() - t0:.0f} s)", flush=True)
 
     # list of test files — to re-listen and check with streaming eval
     with open(os.path.join(OUT, "test_files.txt"), "w") as fh:

@@ -5,7 +5,7 @@ Record wake word samples on the speaker: ring RED — wait, GREEN — speak (rec
     .venv/bin/python src/tools/record_samples.py --label hey-peedor -n 15
     .venv/bin/python src/tools/record_samples.py --label negative -n 10 --record 3   # "not the phrase" samples for testing
 
-Clips: recordings/<label>/<label>_<дата-время>_NN.wav — 16 kHz, 16-bit, mono (openWakeWord format).
+Clips: recordings/<label>/<label>_<date-time>_NN.wav — 16 kHz, 16-bit, mono (openWakeWord format).
 """
 import argparse
 import math
@@ -50,7 +50,7 @@ def main():
     try:
         for i in range(1, args.count + 1):
             px.fill((255, 0, 0))
-            print(f"[{i:2d}/{args.count}] красный — жди {args.wait:g} с", flush=True)
+            print(f"[{i:2d}/{args.count}] red — wait {args.wait:g} s", flush=True)
             time.sleep(args.wait)
 
             path = os.path.join(out_dir, f"{args.label}_{stamp}_{i:02d}.wav")
@@ -63,14 +63,14 @@ def main():
                 print(f"   arecord: {rec.stderr.strip()}", file=sys.stderr)
                 continue
             peak = level_dbfs(path)
-            note = "  ⚠️ тихо — похоже, ничего не сказано" if peak < -25 else ""
-            print(f"   записано {os.path.basename(path)}  пик {peak:.1f} dBFS{note}", flush=True)
+            note = "  ⚠️ quiet — looks like nothing was said" if peak < -25 else ""
+            print(f"   recorded {os.path.basename(path)}  peak {peak:.1f} dBFS{note}", flush=True)
     except KeyboardInterrupt:
-        print("\nпрервано")
+        print("\ninterrupted")
     finally:
         px.fill((0, 0, 0))
         px.deinit()
-    print(f"готово: {out_dir}")
+    print(f"done: {out_dir}")
     return 0
 
 

@@ -63,13 +63,13 @@ def tts(k, text, voice, speed, path):
             if e.code in (429, 500, 502, 503) and attempt < 4:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"  ошибка {e.code} {voice} «{text}»: {e.read()[:200]!r}")
+            print(f"  error {e.code} {voice} «{text}»: {e.read()[:200]!r}")
             return False
         except Exception as e:  # network
             if attempt < 4:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"  ошибка {voice} «{text}»: {e}")
+            print(f"  error {voice} «{text}»: {e}")
             return False
 
 
@@ -86,7 +86,7 @@ def main():
         jobs.append((text, v, sp, os.path.join(OUT, "neg", f"xai_{v}_n{i:02d}_s{sp}.mp3")))
     todo = [j for j in jobs if not os.path.exists(j[3])]
     chars = sum(len(j[0]) for j in todo)
-    print(f"{len(voices)} голосов; заданий {len(jobs)}, осталось {len(todo)} (~{chars} символов, "
+    print(f"{len(voices)} voices; {len(jobs)} jobs, {len(todo)} left (~{chars} chars, "
           f"~${chars * 15 / 1e6:.2f})", flush=True)
 
     done = fail = 0
@@ -96,8 +96,8 @@ def main():
             done += ok
             fail += not ok
             if (done + fail) % 50 == 0:
-                print(f"  {done + fail}/{len(todo)} ({time.time() - t0:.0f} с)", flush=True)
-    print(f"готово: {done}, ошибок {fail}; pos={len(os.listdir(os.path.join(OUT, 'pos')))}, "
+                print(f"  {done + fail}/{len(todo)} ({time.time() - t0:.0f} s)", flush=True)
+    print(f"done: {done}, errors {fail}; pos={len(os.listdir(os.path.join(OUT, 'pos')))}, "
           f"neg={len(os.listdir(os.path.join(OUT, 'neg')))}")
 
 

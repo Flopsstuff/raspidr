@@ -70,7 +70,7 @@ def main():
         px.fill((0, 0, 0))
         px[0] = (255, 0, 0)
         px.show()
-        print(f"Калибровка фона {CALIBRATE_S} с — молчи (светодиод 0 красный)", flush=True)
+        print(f"Background calibration {CALIBRATE_S} s — stay quiet (LED 0 red)", flush=True)
         start = time.time()
         recording = False
         while True:
@@ -88,8 +88,8 @@ def main():
                 if elapsed >= CALIBRATE_S:
                     floor_l = sorted(base_l)[len(base_l) // 2]
                     floor_r = sorted(base_r)[len(base_r) // 2]
-                    print(f"Фон: L {floor_l:.1f} dBFS, R {floor_r:.1f} dBFS")
-                    print(f"Запись {args.seconds:g} с — говори (светодиод 0 зелёный)", flush=True)
+                    print(f"Background: L {floor_l:.1f} dBFS, R {floor_r:.1f} dBFS")
+                    print(f"Recording {args.seconds:g} s — speak (LED 0 green)", flush=True)
                     px[0] = (0, 255, 0)
                     recording = True
                     start = time.time()
@@ -115,14 +115,14 @@ def main():
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(recorded.tobytes())
-    print(f"Сохранено: {args.out}")
+    print(f"Saved: {args.out}")
 
     try:
         if not args.no_play:
             px.fill((0, 0, 0))
             px[0] = (0, 0, 255)
             px.show()
-            print("Воспроизведение (светодиод 0 синий): левый микрофон → левая колонка, правый → правая")
+            print("Playback (LED 0 blue): left mic → left speaker, right → right")
             subprocess.run(["aplay", "-q", "-D", "default", args.out])
     finally:
         px.fill((0, 0, 0))

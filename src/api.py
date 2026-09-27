@@ -46,7 +46,7 @@ def start(say, log, token, port=DEFAULT_PORT, host="0.0.0.0"):
             if self.path.rstrip("/") != "/say":
                 return self.reply(404, {"error": "not found"})
             if not hmac.compare_digest(self.headers.get("Authorization", "").encode(), expected):
-                log(f"[API] 401 от {self.client_address[0]}")
+                log(f"[API] 401 from {self.client_address[0]}")
                 return self.reply(401, {"error": "unauthorized"}, [("WWW-Authenticate", "Bearer")])
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -65,7 +65,7 @@ def start(say, log, token, port=DEFAULT_PORT, host="0.0.0.0"):
                 return self.reply(400, {"error": "no text"})
             if len(text) > MAX_TEXT:
                 return self.reply(400, {"error": f"text over {MAX_TEXT} characters"})
-            log(f"[API] /say от {self.client_address[0]}, {len(text)} знаков")
+            log(f"[API] /say from {self.client_address[0]}, {len(text)} chars")
             try:
                 chunks = say(text)
             except Exception as e:

@@ -34,7 +34,7 @@ def fetch(url, dst, start=0, end=None):
     except urllib.error.HTTPError as e:
         # a whole-file download (end=None) that is already complete: the range starts at EOF → 416
         if e.code == 416 and end is None and have:
-            print(f"  {os.path.basename(dst)}: уже скачан ({have / 1e9:.2f} GB)")
+            print(f"  {os.path.basename(dst)}: already downloaded ({have / 1e9:.2f} GB)")
             return
         raise
     with r, open(dst, "ab") as f:
@@ -55,7 +55,7 @@ def npy_header(url):
     """Read the .npy header: (header length in bytes, dict with descr/shape/fortran_order)."""
     req = urllib.request.Request(url, headers={"Range": "bytes=0-4095"})
     head = urllib.request.urlopen(req).read()
-    assert head[:6] == b"\x93NUMPY", "не .npy"
+    assert head[:6] == b"\x93NUMPY", "not a .npy"
     major = head[6]
     if major == 1:
         hlen = int.from_bytes(head[8:10], "little")
@@ -83,8 +83,8 @@ def main():
     shape = meta["shape"]
     row = dtype.itemsize * int(np.prod(shape[1:]))
     rows = min(shape[0], int(args.gb * 1e9) // row)
-    print(f"ACAV: всего {shape} {dtype}, беру {rows} строк ({rows / shape[0] * 100:.0f}%, "
-          f"~{rows / shape[0] * 2000:.0f} ч)")
+    print(f"ACAV: {shape} {dtype} in all, taking {rows} rows ({rows / shape[0] * 100:.0f}%, "
+          f"~{rows / shape[0] * 2000:.0f} h)")
 
     dst = os.path.join(args.out, f"acav_{rows}.npy")
     fetch(BASE + ACAV, dst, 0, data_off + rows * row)
@@ -94,13 +94,13 @@ def main():
     hlen = data_off - hdr_start
     new_bytes = new.encode("latin1")
     if len(new_bytes) + 1 > hlen:
-        sys.exit("новый заголовок длиннее старого — так не должно быть")
+        sys.exit("the new header is longer than the old one — that shouldn't happen")
     with open(dst, "r+b") as f:
         f.seek(hdr_start)
         f.write(new_bytes + b" " * (hlen - len(new_bytes) - 1) + b"\n")
 
     arr = np.load(dst, mmap_mode="r")
-    print(f"готово: {dst} {arr.shape} {arr.dtype}")
+    print(f"done: {dst} {arr.shape} {arr.dtype}")
 
 
 if __name__ == "__main__":

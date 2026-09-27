@@ -144,7 +144,7 @@ class Greeter:
     def __init__(self, folder):
         self.files = sorted(glob.glob(os.path.join(folder, "*.wav")))
         if not self.files:
-            sys.exit(f"в {folder} нет WAV")
+            sys.exit(f"no WAV in {folder}")
         self.last = None
         self.proc = None
 
@@ -160,7 +160,7 @@ class Greeter:
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
         self.proc = subprocess.Popen(["aplay", "-q", "-D", "default", f], stderr=subprocess.DEVNULL)
-        print(f"[SAY] {os.path.basename(f)} ({seconds:.1f} с)", flush=True)
+        print(f"[SAY] {os.path.basename(f)} ({seconds:.1f} s)", flush=True)
         return seconds
 
 
@@ -188,7 +188,7 @@ def mic_frames(device):
 def wav_frames(path):
     with wave.open(path, "rb") as w:
         if w.getframerate() != RATE or w.getsampwidth() != 2:
-            sys.exit(f"{path}: нужен WAV 16 кГц 16 бит (есть {w.getframerate()} Гц, {w.getsampwidth() * 8} бит)")
+            sys.exit(f"{path}: need a 16 kHz 16-bit WAV (got {w.getframerate()} Hz, {w.getsampwidth() * 8} bit)")
         channels = w.getnchannels()
         while True:
             data = w.readframes(FRAME)
@@ -208,7 +208,7 @@ def resolve_model(name, framework):
     for f in sorted(os.listdir(models_dir)):
         if f.startswith(name) and f.endswith("." + framework):
             return os.path.join(models_dir, f)
-    sys.exit(f"модель не найдена: {name} ({framework})")
+    sys.exit(f"model not found: {name} ({framework})")
 
 
 def main():
@@ -236,7 +236,7 @@ def main():
     phases = None
     if args.test:
         neg, pos = (float(x) for x in args.test.split(","))
-        phases = [("НЕ говори фразу", neg, (255, 0, 0)), ("говори фразу", pos, (0, 0, 255))]
+        phases = [("DON'T say the phrase", neg, (255, 0, 0)), ("say the phrase", pos, (0, 0, 255))]
 
     paths = [resolve_model(m, args.framework) for m in args.model]
     own = [NpzModel(p) for p in paths if p.endswith(".npz")]
@@ -253,7 +253,7 @@ def main():
             features(frame)
             return {}
     names = ([] if model is None else list(model.models.keys())) + [m.name for m in own]
-    print(f"[RUN] модели: {', '.join(names)}  порог={args.threshold} patience={args.patience}", flush=True)
+    print(f"[RUN] models: {', '.join(names)}  threshold={args.threshold} patience={args.patience}", flush=True)
 
     if not args.wav and not args.keep_pulseaudio:
         free_sound_card()
@@ -271,7 +271,7 @@ def main():
     if phases:
         ring.set_status(phases[0][2])
         phase_end = phases[0][1]
-        print(f"[TEST] этап 1: {phases[0][0]} — {phases[0][1]:g} с (красный)", flush=True)
+        print(f"[TEST] stage 1: {phases[0][0]} — {phases[0][1]:g} s (red)", flush=True)
 
     try:
         for frame in frames:
@@ -291,7 +291,7 @@ def main():
                     break
                 ring.set_status(phases[phase_i][2])
                 phase_end += phases[phase_i][1]
-                print(f"[TEST] этап 2: {phases[phase_i][0]} — {phases[phase_i][1]:g} с (синий)", flush=True)
+                print(f"[TEST] stage 2: {phases[phase_i][0]} — {phases[phase_i][1]:g} s (blue)", flush=True)
 
             if audio_t < mute_until:
                 streak = {n: 0 for n in names}
@@ -304,7 +304,7 @@ def main():
                     last_fire[name] = audio_t
                     streak[name] = 0
                     where = f"{audio_t:.2f}s" if args.wav else ts()
-                    tag = f" [этап {phase_i + 1}]" if phases else ""
+                    tag = f" [stage {phase_i + 1}]" if phases else ""
                     print(f"[WAKE] {where} {name} score={score:.3f}{tag}", flush=True)
                     fired.append(phase_i)
                     if greeter:
@@ -317,16 +317,16 @@ def main():
             if args.stats and not args.wav and time.time() - stat_wall >= args.stats:
                 wall = time.time() - stat_wall
                 cpu = time.process_time() - stat_cpu
-                print(f"[STAT] CPU {100 * cpu / wall:5.1f}% одного ядра, "
-                      f"инференс {1000 * stat_infer / stat_n:5.1f} мс/кадр (бюджет 80 мс)", flush=True)
+                print(f"[STAT] CPU {100 * cpu / wall:5.1f}% of one core, "
+                      f"inference {1000 * stat_infer / stat_n:5.1f} ms/frame (budget 80 ms)", flush=True)
                 stat_wall, stat_cpu, stat_n, stat_infer = time.time(), time.process_time(), 0, 0.0
     except KeyboardInterrupt:
         pass
     finally:
         ring.close()
     if phases:
-        print(f"[TEST] ложных срабатываний (этап 1, {phases[0][1]:g} с): {fired.count(0)}")
-        print(f"[TEST] срабатываний на фразу (этап 2): {fired.count(1)} — сравни с тем, сколько раз сказал")
+        print(f"[TEST] false triggers (stage 1, {phases[0][1]:g} s): {fired.count(0)}")
+        print(f"[TEST] triggers on the phrase (stage 2): {fired.count(1)} — compare with how many times you said it")
     return 0
 
 

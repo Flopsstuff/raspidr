@@ -105,7 +105,7 @@ def main():
 
     pos = len(os.listdir(os.path.join(OUT, "pos")))
     neg = len(os.listdir(os.path.join(OUT, "neg")))
-    print(f"новых {n}; всего pos={pos}, neg={neg}")
+    print(f"new {n}; total pos={pos}, neg={neg}")
 
 
 if __name__ == "__main__":

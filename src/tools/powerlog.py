@@ -99,15 +99,15 @@ def report(path, window):
             continue
         rate = -fit([(t, soc) for t, soc, _, _ in s])
         cpu = sum(r[3] for r in s) / len(s)
-        print(f"{hm(s[0][0])}–{hm(s[-1][0])} ({minutes:.0f} мин) на батарее: {s[0][1]:.1f}% → {s[-1][1]:.1f}%, "
-              f"{rate:.1f} %/ч ≈ {rate / 100 * BATTERY_WH:.2f} Вт, CPU {cpu:.0f}%")
+        print(f"{hm(s[0][0])}–{hm(s[-1][0])} ({minutes:.0f} min) on battery: {s[0][1]:.1f}% → {s[-1][1]:.1f}%, "
+              f"{rate:.1f} %/h ≈ {rate / 100 * BATTERY_WH:.2f} W, CPU {cpu:.0f}%")
         start = s[0][0]
         while start < s[-1][0]:
             end = start + dt.timedelta(minutes=window)
             part = [r for r in s if start <= r[0] < end]
             if len(part) >= 4:
                 rate = -fit([(t, soc) for t, soc, _, _ in part])
-                print(f"   {hm(start)}–{hm(end)}  {rate:5.1f} %/ч ≈ {rate / 100 * BATTERY_WH:.2f} Вт  "
+                print(f"   {hm(start)}–{hm(end)}  {rate:5.1f} %/h ≈ {rate / 100 * BATTERY_WH:.2f} W  "
                       f"CPU {sum(r[3] for r in part) / len(part):4.0f}%")
             start = end
 

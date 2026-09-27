@@ -33,7 +33,7 @@ class Mic:
         while True:
             data = self.proc.stdout.read(FRAME * 2)
             if len(data) < FRAME * 2:
-                raise RuntimeError("микрофон: " + self.proc.stderr.read().decode(errors="replace").strip())
+                raise RuntimeError("microphone: " + self.proc.stderr.read().decode(errors="replace").strip())
             yield np.frombuffer(data, dtype=np.int16)
 
     def close(self):

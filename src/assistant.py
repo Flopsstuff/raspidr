@@ -39,6 +39,7 @@ import sys
 import threading
 import time
 import urllib.request
+from datetime import datetime
 from types import SimpleNamespace
 
 import numpy as np
@@ -60,14 +61,38 @@ HISTORY_PAIRS = 3  # how many question/answer pairs to remember
 HISTORY_TTL = 300  # seconds of silence before the history is reset
 
 SYSTEM_PROMPT = (
-    "Ты — голосовой ассистент умной колонки, тебя зовут «пидор». Твой ответ озвучивается синтезатором речи. "
-    "Отвечай по-русски, коротко: одно-три предложения. Никакого markdown, списков, эмодзи, ссылок и сокращений — "
-    "только обычный разговорный текст, числа пиши словами, если их немного. "
-    "Своё имя пиши «пидор» и никогда не начинай с него фразу."
+    "Ты — голосовой ассистент умной колонки. Твой ответ озвучивается синтезатором речи. "
+    "Отвечай на том языке, на котором тебя спросили (обычно это русский, английский или польский), "
+    "коротко: одно-три предложения. Никакого markdown, списков, эмодзи, ссылок и сокращений — "
+    "только обычный разговорный текст, числа пиши словами, если их немного."
 )
+WEEKDAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 
 # On silence/noise Whisper sometimes "hallucinates" subtitle credits
 STT_JUNK = re.compile(r"субтитр|продолжение следует|спасибо за просмотр|редактор|подпишитесь", re.I)
+
+
+def system_prompt(battery=None):
+    """SYSTEM_PROMPT + the current date and time + the battery (soc %, charging) when the knob knows it."""
+    now = datetime.now().astimezone()
+    parts = [SYSTEM_PROMPT, f"Сейчас {WEEKDAYS[now.weekday()]}, {now:%d.%m.%Y}, {now:%H:%M} ({now:%Z})."]
+    if battery:
+        soc, charging = battery
+        parts.append(f"Заряд батареи колонки: {soc}%, " + ("стоит на зарядке." if charging else "работает от батареи.")
+                     + " Говори о заряде, только если спросят.")
+    return " ".join(parts)
+
+
+def tts_lang(text, prev):
+    """Language of a TTS chunk for xAI (Groq Orpheus takes none): Cyrillic — ru, Polish letters — pl, other Latin —
+    en, unless the answer is already Polish (a chunk without diacritics); no letters at all — prev."""
+    if re.search(r"[а-яё]", text, re.I):
+        return "ru"
+    if re.search(r"[ąćęłńśźż]", text, re.I):
+        return "pl"
+    if re.search(r"[a-z]", text, re.I):
+        return prev if prev == "pl" else "en"
+    return prev
 
 
 def clean_stt(text):
@@ -206,7 +231,7 @@ class Assistant:
 
     def start_answer(self, pcm=None, text=None, pieces=None):
         self.job = SimpleNamespace(cancel=threading.Event(), done=threading.Event(), spoke=threading.Event(),
-                                   error=None, long=False)
+                                   error=None, long=False, lang="ru")
         self.set_state("think")
         threading.Thread(target=self._answer, args=(self.job, pcm, text, pieces), daemon=True).start()
 
@@ -227,7 +252,7 @@ class Assistant:
             try:
                 for attempt in (1, 2):
                     try:
-                        raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), f"piece{piece.n}.wav", lang="ru", prompt=prompt)
+                        raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), f"piece{piece.n}.wav", prompt=prompt)
                         break
                     except Exception as e:
                         if attempt == 2:
@@ -253,7 +278,7 @@ class Assistant:
                     return None
         if any(p.error for p in pieces):
             t = time.time()
-            text = clean_stt(voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор"))
+            text = clean_stt(voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", prompt="хэй пидор"))
             self.log(f"[STT whole {time.time() - t:.1f}s] «{text}»")
             return text
         text = " ".join(p.text for p in pieces if p.text)
@@ -269,7 +294,7 @@ class Assistant:
                     return
             elif text is None:
                 t0 = time.time()
-                raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор")
+                raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", prompt="хэй пидор")
                 text = clean_stt(raw)
                 self.log(f"[STT {time.time() - t0:.1f}s] «{text}»" + ("" if raw.strip() == text else f"  (raw: «{raw}»)"))
                 if not text:
@@ -279,7 +304,7 @@ class Assistant:
             if time.time() - self.last_turn > HISTORY_TTL:
                 self.history = []
             user = {"role": "user", "content": text}
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history + [user]
+            messages = [{"role": "system", "content": system_prompt(self.button.battery)}] + self.history + [user]
 
             tts_q = queue.Queue()
             tts = threading.Thread(target=self._tts_worker, args=(job, tts_q), daemon=True)
@@ -308,14 +333,16 @@ class Assistant:
         finally:
             job.done.set()
 
-    def synth(self, chunk, tag):
-        """One chunk → WAV bytes: Groq in a single attempt, on any error (429 included) — xAI."""
+    def synth(self, chunk, tag, job):
+        """One chunk → WAV bytes: Groq in a single attempt, on any error (429 included) — xAI.
+        job.lang — the language of the answer's previous chunk (xAI needs one)."""
         t = time.time()
+        job.lang = tts_lang(chunk, job.lang)
         try:
             audio, prov = tts_groq_once(chunk), "groq"
         except Exception as e:
             self.log(f"[{tag}] groq: {str(e)[:80]} → xai")
-            audio, prov = voice.tts(chunk, provider="xai", voice=self.args.xai_voice), "xai"
+            audio, prov = voice.tts(chunk, provider="xai", voice=self.args.xai_voice, lang=job.lang), "xai"
         self.log(f"[{tag} {prov} {time.time() - t:.1f}s] {chunk}")
         return audio
 
@@ -327,7 +354,7 @@ class Assistant:
                 return
             n += 1
             try:
-                audio = self.synth(chunk, f"TTS#{n}")
+                audio = self.synth(chunk, f"TTS#{n}", job)
             except Exception as e:
                 job.error = e
                 return
@@ -374,13 +401,13 @@ class Assistant:
         if not chunks:
             raise ValueError("nothing to say")
         job = SimpleNamespace(text=text, audio=queue.Queue(), done=threading.Event(), cancel=threading.Event(),
-                              synthesized=0, error=None)
+                              synthesized=0, error=None, lang="ru")
         self.announcements.put(job)
         try:
             for n, chunk in enumerate(chunks, 1):
                 if job.cancel.is_set():
                     break
-                job.audio.put(self.synth(chunk, f"SAY#{n}"))
+                job.audio.put(self.synth(chunk, f"SAY#{n}", job))
                 job.synthesized += 1
         except Exception as e:
             job.error = e

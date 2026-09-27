@@ -27,7 +27,8 @@ name prefix to catch (default "Triki"; empty — off).
 
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
     assistant → knob:  mode <leds mode>
-    knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double, summon
+    knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double, summon,
+                       battery <percent> charger|battery | battery unknown  (on connect and whenever it changes)
 """
 import json
 import os
@@ -212,7 +213,7 @@ class Encoder:
 
 
 class Server:
-    """Unix socket for the assistant: takes ring modes, sends button events and the wake word state."""
+    """Unix socket for the assistant: takes ring modes, sends button events, the wake word state and the battery."""
 
     def __init__(self, path, on_line, on_connect, on_disconnect):
         self.path = path
@@ -238,7 +239,8 @@ class Server:
 
     def _serve(self, conn):
         log("[KNOB] the assistant connected")
-        self.send(self.on_connect(), conn)
+        for line in self.on_connect():
+            self.send(line, conn)
         try:
             for line in conn.makefile(encoding="utf-8"):
                 self.on_line(line.strip())
@@ -277,7 +279,9 @@ class Knob:
         self.volts, self.under = None, 0  # under: reads in a row below SHUTDOWN_V
         self.charging = self.encoder.charging()
         self.battery_now = threading.Event()  # poll right away (charger plugged in/out)
-        self.server = Server(KNOB_SOCKET, self.on_line, self.wake_line, lambda: self.ring.set_mode("off"))
+        self.battery_sent = None
+        self.server = Server(KNOB_SOCKET, self.on_line, lambda: [self.wake_line(), self.battery_line()],
+                             lambda: self.ring.set_mode("off"))
         log(f"[KNOB] volume {self.volume.level + 1}/{len(LEVELS)}, wake word "
             + ("on" if self.awake else "OFF") + f", socket {KNOB_SOCKET}; power: "
             + ("charger" if self.charging else "battery"))
@@ -286,6 +290,18 @@ class Knob:
 
     def wake_line(self):
         return "wake on" if self.awake else "wake off"
+
+    def battery_line(self):
+        if self.soc is None:
+            return "battery unknown"
+        return f"battery {self.soc:.0f} " + ("charger" if self.charging else "battery")
+
+    def send_battery(self):
+        """To the assistant (it tells Hermes), only when the rounded charge or the power source changed."""
+        line = self.battery_line()
+        if line != self.battery_sent:
+            self.battery_sent = line
+            self.server.send(line)
 
     def on_line(self, line):
         cmd, _, arg = line.partition(" ")
@@ -348,6 +364,7 @@ class Knob:
 
     def poll_battery(self):
         self.soc, self.volts = self.gauge.read()
+        self.send_battery()
         self.check_shutdown()
         low = self.soc is not None and not self.charging and self.soc < (LOW_OFF if self.low else LOW_ON)
         if low != self.low:

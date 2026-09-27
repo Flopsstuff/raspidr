@@ -98,6 +98,8 @@ knob → assistant:  wake on | wake off   (right after connecting and on every t
                    press                (short press)
                    double               (second click of a double click)
                    summon               (Triki button: busy — interrupt, idle — greeting + listening)
+                   battery 73 charger|battery | battery unknown
+                                        (right after connecting and whenever the rounded % or the power source changes)
 ```
 
 When the assistant disconnects, the ring goes to `off`. `assistant.py --leds pi` drives the ring and the button directly
@@ -146,15 +148,19 @@ don't run. Also running: `arecord` ~8% (48 → 16 kHz resampling in ALSA), `pigp
 ### Response pipeline
 
 ```
-utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (strips «…», «—», Whisper subtitle credits)
-  → hermes.stream_chat(system + history + question)
+utterance (PCM) → voice.stt(language auto-detected, prompt «хэй пидор») → clean_stt (strips «…», «—», Whisper subtitle credits)
+  → hermes.stream_chat(system prompt + date/time + battery, history, question)
   → Chunker: first sentence immediately, then merged up to ~100–180 chars, long ones split at a comma
-  → TTS worker: Groq Orpheus, single attempt; 429/error → straight to xAI (leo)
+  → TTS worker: Groq Orpheus, single attempt; 429/error → straight to xAI (leo, language guessed from the chunk)
   → Player (WAV queue, aplay one at a time)
 ```
 
-- **System prompt** (`assistant.SYSTEM_PROMPT`): in Russian, 1–3 sentences, no markdown/lists/emoji,
-  name «пидор», and never at the start of a sentence (Orpheus mangles the name at the start).
+- **System prompt** (`assistant.system_prompt()`, built for every request): answer in the language of the question
+  (usually Russian, English or Polish), 1–3 sentences, no markdown/lists/emoji; plus the current date, weekday and
+  time of the Pi's timezone, and the battery charge and power source from the knob service (left out when unknown;
+  mentioned only when asked).
+- **Languages**: Whisper detects the language itself (no `language` parameter). For xAI TTS the language of each
+  chunk is guessed from its letters: Cyrillic — `ru`, Polish diacritics — `pl`, other Latin — `en`.
 - **History**: last 3 question–answer pairs; 5 minutes of silence resets it.
 - The first sentence is sent to TTS separately so that audio starts as early as possible.
 

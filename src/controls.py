@@ -24,7 +24,7 @@ class KnobLink:
         self.summon = threading.Event()  # Triki token button: interrupt when busy, greeting + listening when idle
         self.awake = threading.Event()  # wake word and microphone on (long press toggles)
         self.awake.set()
-        self.battery = None  # (percent, charging) from the knob; None — unknown
+        self.battery = None  # (percent or None — the gauge doesn't answer, charging) from the knob; None — no word yet
         self.mode = "off"
         self.sock = None
         self.lock = threading.Lock()
@@ -94,7 +94,7 @@ class KnobLink:
             self.awake.clear()
         elif line.startswith("battery "):
             _, soc, power = (line.split() + ["", ""])[:3]
-            self.battery = (int(soc), power == "charger") if soc.isdigit() else None
+            self.battery = (int(soc) if soc.isdigit() else None, power == "charger")
 
     def close(self):
         self.stopped.set()

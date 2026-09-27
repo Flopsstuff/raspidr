@@ -12,7 +12,7 @@ next to the assistant, so volume and the ring keep working while the assistant r
     double click — charge bar on the ring + a note; the first click is sent right away as a press, the second as
                    "double" (the assistant drops the listening the first one started)
 
-Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 30 s:
+Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every BATTERY_POLL_S s:
     below 15% on battery — a steady amber LED + two low notes once; off above 18% or on the charger
     below 3.55 V on battery, 3 reads in a row — the ring drains, two low notes + three down, then a clean poweroff
                            (the gauge's % is unreliable near empty: it showed 0% an hour before the cell hit 2.8 V
@@ -28,7 +28,7 @@ name prefix to catch (default "Triki"; empty — off).
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
     assistant → knob:  mode <leds mode>
     knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double, summon,
-                       battery <percent> charger|battery | battery unknown  (on connect and whenever it changes)
+                       battery <percent>|unknown charger|battery  (on connect and whenever it changes)
 """
 import json
 import os
@@ -56,7 +56,7 @@ CW2015 = 0x62
 EDGES_PER_STEP = 4  # one detent = a full quadrature cycle
 LONG_PRESS_S = 0.8
 DOUBLE_CLICK_S = 0.4
-BATTERY_POLL_S = 30
+BATTERY_POLL_S = 60
 GAUGE_TRIES, GAUGE_RETRY_S = 5, 0.06  # the gauge drops ~1 read in 3 in a regular rhythm; a retry gets through
 LOW_ON, LOW_OFF = 15.0, 18.0  # % — low battery indicator with hysteresis
 SHUTDOWN_V, SHUTDOWN_READS = 3.55, 3  # cell volts on battery, reads in a row (a load dip mustn't power it off)
@@ -292,9 +292,9 @@ class Knob:
         return "wake on" if self.awake else "wake off"
 
     def battery_line(self):
-        if self.soc is None:
-            return "battery unknown"
-        return f"battery {self.soc:.0f} " + ("charger" if self.charging else "battery")
+        """The charge is unknown when the gauge doesn't answer; the charger pin (GPIO4) is always known."""
+        soc = "unknown" if self.soc is None else f"{self.soc:.0f}"
+        return f"battery {soc} " + ("charger" if self.charging else "battery")
 
     def send_battery(self):
         """To the assistant (it tells Hermes), only when the rounded charge or the power source changed."""

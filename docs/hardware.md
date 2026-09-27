@@ -171,7 +171,7 @@ UPS-Lite V1.3 board with a CW2015 fuel gauge.
   every 5 reads 50 ms apart), at 10 kHz (`dtparam=i2c_arm_baudrate=10000`, tried 2026-09-26) just as often but scattered —
   a lower speed doesn't help, so it's left at the default 100 kHz. Likely electrical (supply noise). `knob.py` retries
   each read up to 5 times, 60 ms apart; that gets an answer every time (usually on the 1st–4th try).
-- RaspiDR reads it in `src/knob.py` every 30 s and watches GPIO4 (pigpio callback, 50 ms glitch filter); see
+- RaspiDR reads it in `src/knob.py` every `BATTERY_POLL_S` seconds and watches GPIO4 (pigpio callback, 50 ms glitch filter); see
   [architecture.md](architecture.md#encoder-knob-service).
 
 ⚠️ The main known issue is **the contact of the signal pogo pins**. Power still gets through (the Pi

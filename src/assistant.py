@@ -73,12 +73,14 @@ STT_JUNK = re.compile(r"субтитр|продолжение следует|с�
 
 
 def system_prompt(battery=None):
-    """SYSTEM_PROMPT + the current date and time + the battery (soc %, charging) when the knob knows it."""
+    """SYSTEM_PROMPT + the current date and time + the battery (percent or None, charging) from the knob service;
+    battery None — no knob (Mac, --leds pi): nothing about it."""
     now = datetime.now().astimezone()
     parts = [SYSTEM_PROMPT, f"Сейчас {WEEKDAYS[now.weekday()]}, {now:%d.%m.%Y}, {now:%H:%M} ({now:%Z})."]
     if battery:
         soc, charging = battery
-        parts.append(f"Заряд батареи колонки: {soc}%, " + ("стоит на зарядке." if charging else "работает от батареи.")
+        parts.append(("Заряд батареи колонки неизвестен" if soc is None else f"Заряд батареи колонки: {soc}%")
+                     + (", стоит на зарядке." if charging else ", работает от батареи.")
                      + " Говори о заряде, только если спросят.")
     return " ".join(parts)
 

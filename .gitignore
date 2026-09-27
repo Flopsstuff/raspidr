@@ -31,3 +31,6 @@ docs/.vitepress/dist/
 *.swp
 .DS_Store
 .gitpmoji
+
+# AI-generated image drafts (imagegen); chosen ones are copied into docs/images/
+assets/ai-gen/

@@ -3,6 +3,8 @@
 Voice assistant on a Raspberry Pi Zero 2 W: wake word «хэй пидор» ("hey peedor"; custom openWakeWord model) →
 greeting → utterance recording → Groq STT → Hermes LLM agent → Groq TTS, with each stage animated on a NeoPixel ring.
 
+![RaspiDR architecture](docs/images/architecture.jpg)
+
 **Documentation:** [flopsstuff.github.io/raspidr](https://flopsstuff.github.io/raspidr/) (sources in [docs/](docs/index.md))
 
 | | |

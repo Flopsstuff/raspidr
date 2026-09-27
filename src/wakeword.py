@@ -77,9 +77,13 @@ class QuietGate:
     phrase and its onset, and the gate stays open for hold_s after the last loud frame. The floor follows the noise
     down fast and up slowly (~0.3 dB/s), so a steady fan or hum closes the gate again.
 
+    The level is measured in the speech band only: with a full-band RMS, low-frequency noise (a washing machine,
+    the mic's hum) hid quiet or distant phrases, and the gate lost ~40% of them at -16 dB in a simulation on a
+    recorded home background. 1 s of pre-roll kept the same recall as 2 s (docs/power_efficiency.md).
+
     gate(frame) → the frames to feed into the features now (empty while quiet). seen / fed count frames for stats."""
 
-    def __init__(self, margin_db=8.0, hold_s=1.5, preroll_s=2.0, min_dbfs=-65.0):
+    def __init__(self, margin_db=8.0, hold_s=1.5, preroll_s=1.0, min_dbfs=-65.0, band=(300, 4000)):
         frame_s = FRAME / RATE
         self.margin = 10 ** (margin_db / 20)
         self.min_rms = 32768 * 10 ** (min_dbfs / 20)
@@ -88,10 +92,19 @@ class QuietGate:
         self.floor = None
         self.left = 0  # frames the gate stays open
         self.seen = self.fed = 0
+        freqs = np.fft.rfftfreq(FRAME, 1 / RATE)
+        self.band = (freqs >= band[0]) & (freqs <= band[1])
+        self.window = np.hanning(FRAME).astype(np.float32)
+        self.norm = 2 / (FRAME * float(np.sum(self.window ** 2)))  # band power → the scale of a plain RMS²
+
+    def level(self, frame):
+        """RMS of the frame in the speech band."""
+        spec = np.fft.rfft(frame.astype(np.float32) * self.window)[self.band]
+        return math.sqrt(float(np.sum(spec.real ** 2 + spec.imag ** 2)) * self.norm)
 
     def __call__(self, frame):
         self.seen += 1
-        rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+        rms = self.level(frame)
         if self.floor is None or rms < self.floor:
             self.floor = rms if self.floor is None else 0.8 * self.floor + 0.2 * rms
         else:

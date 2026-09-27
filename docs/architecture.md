@@ -107,7 +107,8 @@ so the assistant saves it where it can:
 - `wakeword.fast_features` — the stock `AudioFeatures` keeps 10 s of raw audio and copies all of it into a Python list
   on every frame (16 ms per frame); a buffer of one frame + 480 samples gives the same features.
 - `wakeword.QuietGate` — in IDLE the models only run on sound at least `--gate-db 8` dB above the adaptive noise floor,
-  plus 2 s of pre-roll before it and 1.5 s after. On the live recordings detection is the same as without the gate (15/15).
+  plus 1 s of pre-roll before it and 1.5 s after. The level is measured in the 300–4000 Hz speech band, so low-frequency
+  noise doesn't mask quiet phrases (see [power efficiency](power_efficiency.md)).
 - Outside IDLE the models don't run at all; back in IDLE a score is computed only after 24 fresh frames, so the features
   that still hold the wake phrase can't fire it again.
 - Every 5 minutes the log says how much of the waiting time the models ran and the noise floor (`[GATE] …`).

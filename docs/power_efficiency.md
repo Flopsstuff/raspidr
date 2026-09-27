@@ -109,6 +109,34 @@ The pre-roll deserves special attention: opening the gate can release about 25 q
 in one burst. A shorter pre-roll may save work on incidental sounds, but it may also remove useful context from quiet wake
 phrases.
 
+**Result (2026-09-27, applied).** Simulation of the IDLE path (gate → features → model → patience 2) on a 20-minute
+recording of a busy home (washing machine, cleaning, speech) from the speaker's microphone. The 15 live wake phrases from
+`hey-peedor/pi-rec` were added into the same 60 spots of the background at 0, −10 and −16 dB. CPU per 80 ms frame is
+estimated from costs measured on the Pi: 25.9 ms of features per fed frame, ~2 ms of MLP per scored frame, 11.3 ms of
+Silero per run.
+
+| Gate | Fed | CPU/frame | Recall 0 dB | −10 dB | −16 dB |
+|---|---|---|---|---|---|
+| none | 100% | 27.9 ms | 52/60 | 49/60 | 37/60 |
+| full-band RMS, 8 dB, pre-roll 2 s (before) | 71% | 19.5 ms | 52/60 | 48/60 | 22/60 |
+| full-band, pre-roll 1 s | 62% | 17.1 ms | 52/60 | 49/60 | 22/60 |
+| 300–4000 Hz band | 73% | 20.1 ms | 52/60 | 49/60 | 36/60 |
+| **band, pre-roll 1 s** (applied) | 67% | 18.5 ms | 52/60 | 49/60 | 35/60 |
+| band, 10 dB, pre-roll 1 s | 60% | 16.5 ms | 52/60 | 49/60 | 32/60 |
+| band, 12 dB, pre-roll 1 s | 51% | 14.1 ms | 52/60 | 47/60 | 23/60 |
+| band, pre-roll 1 s, hold 1 s | 63% | 17.3 ms | 52/60 | 49/60 | 34/60 |
+| band, 20th-percentile floor, pre-roll 1 s | 69% | 19.1 ms | 52/60 | 49/60 | 33/60 |
+| Silero ≥ 0.2 (max over chunks) as a second stage | 15% | 5.3 ms | 52/60 | 47/60 | 17/60 |
+
+- The full-band gate lost ~40% of the quiet phrases the ungated model found: low-frequency noise dominated the RMS, so
+  quiet speech didn't open the gate. Measuring the level in 300–4000 Hz restores recall to about the ungated level.
+- The gate saves little in a noisy home: short pauses save nothing, because the frames of any pause shorter than the
+  pre-roll are fed later anyway. The main savings are expected in a quiet room, which still needs a measurement.
+- Silero as a second stage cuts CPU four to five times but loses even more quiet phrases than the old gate; rejected.
+- The speech-band level costs 0.22 ms per frame on the Pi instead of 0.13 ms for the plain RMS.
+- The same run found one false wake on the background (two frames at 0.57 on the owner's ordinary speech, onnx on the
+  Mac; the tflite assistant on the Pi didn't fire at that moment).
+
 ### Gate Silero before speech starts
 
 Silero VAD currently runs for every frame in LISTEN, including up to five seconds of silent follow-up waiting. Use a cheap

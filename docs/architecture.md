@@ -156,7 +156,9 @@ encoder callbacks (pigpio), socket accept + one reader per client.
 ## Audio on the Pi
 
 - ALSA `default` = asym: capture via `dsnoop`, playback via `dmix` (`/etc/wm8960-soundcard/asound.conf`), so
-  the microphone and several players work simultaneously.
+  the microphone and several players work simultaneously. The card runs at 48 kHz; `pcm.capture` converts to 16 kHz
+  with `rate_converter "linear"` (~1% CPU instead of ~13% with the global `samplerate`, see
+  [power efficiency](power_efficiency.md)).
 - PulseAudio (socket-activated user service) grabs the card → `Device or resource busy`, a volume reset, and a
   microphone that records pure zeros. It starts on every ssh login, so `raspidr.sh install` masks it for the user
   (note in `~/PULSEAUDIO_DISABLED.txt`, `raspidr.sh uninstall` unmasks). `assistant.py` also stops it on startup

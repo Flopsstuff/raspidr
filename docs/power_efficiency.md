@@ -12,7 +12,8 @@ Measurements from 2026-09-26 show the main continuous costs while waiting for th
 
 - openWakeWord takes about 27 ms of CPU per 80 ms audio frame when the quiet gate is open: approximately 21 ms for the
   embedding model, 4 ms for the mel spectrogram and only 2 ms for the custom MLP;
-- `arecord` uses about 8% of one core, apparently for ALSA conversion from 48 kHz to 16 kHz;
+- `arecord` uses about 8% of one core, apparently for ALSA conversion from 48 kHz to 16 kHz (12.8% measured in
+  isolation; reduced to about 1% on 2026-09-27, see below);
 - `pigpiod` uses about 4.5% of one core;
 - `knob.py` uses about 2% of one core;
 - the assistant uses 164–204 MB RSS, while the whole board has 416 MB RAM.
@@ -58,6 +59,41 @@ The assistant asks `arecord` for 16 kHz mono through the ALSA `default` device. 
 
 The upper bound is the approximately 8% of one core currently attributed to `arecord`. Detection accuracy must be checked
 because a different resampler or decimator changes the wake-word input.
+
+**Result (2026-09-27, applied).** The cost came from `defaults.pcm.rate_converter "samplerate"` (libsamplerate) in
+`/etc/wm8960-soundcard/asound.conf`. CPU of `arecord` alone, 30 s per path, wake word muted:
+
+| Capture path | CPU of one core |
+|---|---|
+| `default` → `dsnoop` 48k → `samplerate` → 16k (before) | 12.8% |
+| same, `samplerate_linear` / `lavrate_faster` | 1.6% / 3.2% |
+| same, `speexrate` | 2.0% |
+| same, `linear` | 1.1% |
+| `dsnoop` 48k stereo, no conversion | 0.3% |
+| `hw` at 16k (codec decimates) | 0.1–0.8% |
+
+Capturing at 16 kHz directly from the codec is not usable: the WM8960 runs capture and playback at the same rate. With the
+microphone opened first, `dmix` plays at 16 kHz as well (TTS loses everything above 8 kHz); with playback opened first,
+a 16 kHz capture fails with `Slave PCM not usable`. Switching the card to 16 kHz in IDLE and back to 48 kHz for playback
+would save less than 1% of a core over `linear` at the cost of closing and reopening the microphone around every sound.
+
+Accuracy was compared with a loopback run: the speaker played 52 TTS wake phrases and 32 similar-phrase negatives while
+four `arecord` processes captured the same sound through different paths; the model scored each slot offline (onnx).
+
+| Resampler | Positives ≥ 0.5 | Positive median | Negatives ≥ 0.5 (max) |
+|---|---|---|---|
+| `samplerate` (before) | 38/52 | 0.994 | 0/32 (0.07) |
+| `speexrate` | 36/52 | 0.998 | 0/32 (0.20) |
+| `linear` | 38/52 | 0.996 | 0/32 (0.15) |
+| scipy `resample_poly` offline reference | 38/52 | 0.996 | 0/32 (0.05) |
+
+Borderline files flip across the threshold even between two high-quality resamplers (`samplerate` vs scipy differ on
+3 files), so differences of a couple of files are noise of this test. `linear` shows no measurable loss. Both capture
+channels are identical (correlation 1.00, `DATSEL=1`), so the plug downmix doesn't matter.
+
+Applied: `rate_converter "linear"` in `pcm.capture` only; playback keeps `samplerate`. The original file is
+`/etc/wm8960-soundcard/asound.conf.bak-samplerate`. Still to confirm on live speech: recall and false triggers per hour
+over normal use.
 
 ### Tune `QuietGate`
 

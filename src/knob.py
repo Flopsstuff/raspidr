@@ -21,7 +21,8 @@ Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 
 
 Triki BLE token (src/triki.py) — a wireless second knob: its button → "summon" (greeting + listening, or interrupt),
 cap up / PCB up → microphone off / on (same as the long press), turning it flat → volume. Let go after 1 min idle —
-tick down; back without a press (quiet reconnect) — tick up + the volume bar. TRIKI_NAME in .env: the advertised
+tick down; back without a press (quiet reconnect: its button was pressed during the ~3 min it stays awake, or the
+encoder was touched meanwhile) — tick up + the volume bar. The encoder in use also keeps a connected token. TRIKI_NAME in .env: the advertised
 name prefix to catch (default "Triki"; empty — off).
 
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
@@ -426,6 +427,8 @@ class Knob:
             steps = self.encoder.take_steps()
             for _ in range(abs(steps)):
                 self.turn(1 if steps > 0 else -1)
+            if self.triki and (steps or pressed_at is not None):
+                self.triki.poke()  # someone is at the speaker: keep the Triki token or take it back
             if self.encoder.take_power_flips():
                 self.power_changed()
             self.triki_events()

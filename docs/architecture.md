@@ -118,7 +118,9 @@ The token has no sleep command: it sleeps on its own ~180 s after a disconnect o
 never while connected, and a press while it's still advertising only restarts that timer — nothing on air tells it
 apart. So after the idle disconnect the service waits ("cooling"): gone from the air → asleep, the next sighting is a
 press. Still on air 190 s after the disconnect → the button was pressed meanwhile → reconnect quietly (`tick_up` +
-the volume bar, no greeting — it would come minutes late). A lost link (out of range) reconnects quietly too.
+the volume bar, no greeting — it would come minutes late). The encoder turned or pressed while the token is still
+awake → someone is at the speaker → take it back quietly right away; the encoder in use also keeps a connected token
+from the idle disconnect. A lost link (out of range) reconnects quietly too.
 Scanning runs 0.2 s every second. `TRIKI_NAME` in `.env` is the advertised name prefix (default `Triki`, empty — off).
 `tools/triki_probe.py` explores the token by hand: `--watch` (air only), a streaming session, `--cmd <hex>`.
 

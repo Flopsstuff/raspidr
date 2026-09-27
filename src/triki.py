@@ -14,7 +14,8 @@ restarts the timer:
     asleep   — scan; a sighting is a button press → "summon" + connect
     active   — streaming; IDLE_S without motion or presses → disconnect → cooling
     cooling  — scan; gone for ASLEEP_S → asleep. Still on air AWAKE_TOO_LONG_S after the disconnect → its button was
-               pressed meanwhile → reconnect quietly ("link up": no greeting, it would come minutes late)
+               pressed meanwhile → reconnect quietly ("link up": no greeting, it would come minutes late). The encoder
+               touched (poke()) while it's still on air → someone is at the speaker → reconnect quietly right away
     resume   — the link dropped by itself (out of range) → reconnect quietly on the next sighting
     retry    — connecting failed (it happens: "failed to discover services") → try again on the next sighting, no cue:
                the press was already answered with the greeting
@@ -54,6 +55,7 @@ SKIP_FRAMES = 20  # the first frames after the start are noise
 SCAN_ON_S, SCAN_OFF_S = 0.2, 0.8
 ASLEEP_S = 5.0  # not seen this long → it's asleep: the next sighting is a button press
 IDLE_S = 60.0  # connected without motion or presses → disconnect
+POKE_S = 3.0  # an encoder touch this recent takes a cooling token back (spans a scan window that missed it)
 AWAKE_TOO_LONG_S = 190.0  # still advertising this long after a disconnect → its button was pressed (measured 172–180 s)
 MOVING_DPS = 15.0  # gyro magnitude above this (after the bias) counts as being handled
 FACE_G = 0.8  # |accel Z| above this → lying on a face
@@ -142,6 +144,7 @@ class Triki:
         self.events = queue.Queue()
         self.loop = None
         self.stop_ev = None
+        self.poke_t = 0.0  # the encoder was last touched: take the token back while cooling, keep it while connected
         self.thread = threading.Thread(target=self._thread, daemon=True)
         self.thread.start()
 
@@ -158,6 +161,10 @@ class Triki:
             self.loop.run_until_complete(self._main())
         except Exception as e:
             self.log(f"stopped: {type(e).__name__}: {e}")
+
+    def poke(self):
+        """Any thread: the encoder was turned or pressed."""
+        self.poke_t = time.monotonic()
 
     def close(self, timeout=4.0):
         """Disconnect cleanly (a connection left behind keeps the token awake and invisible)."""
@@ -198,6 +205,9 @@ class Triki:
                 elif dev and now - off_t > AWAKE_TOO_LONG_S:
                     state = "resume"
                     self.log(f"still on air {now - off_t:.0f} s after the disconnect — its button was pressed meanwhile")
+                elif dev and now - self.poke_t < POKE_S:
+                    state, self.poke_t = "resume", 0.0  # one touch takes it back once
+                    self.log("the knob was touched while the token is still awake — taking it back")
             if dev is None or state not in ("asleep", "resume", "retry"):
                 await self._sleep(SCAN_OFF_S)
                 continue
@@ -263,6 +273,7 @@ class Triki:
                     if gone.is_set():
                         reason = "lost"
                         break
+                    motion.active_t = max(motion.active_t, self.poke_t)  # the encoder in use: keep the remote
                     if motion.idle_for() > IDLE_S:
                         reason = "idle"
                         break

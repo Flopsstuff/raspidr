@@ -38,7 +38,7 @@ arm_64bit=1
 [all]
 dtoverlay=i2s-mmap
 dtoverlay=wm8960-soundcard
-dtoverlay=w1-gpio          # 1-Wire on GPIO4 (default), no sensors at the moment
+#dtoverlay=w1-gpio         # removed 2026-09-27: no sensors, and w1_bus_master polled GPIO4 at ~30% of a core
 ```
 
 ## Components
@@ -50,7 +50,7 @@ dtoverlay=w1-gpio          # 1-Wire on GPIO4 (default), no sensors at the moment
 | UPS-Lite V1.3 (XiaoJ), CW2015 fuel gauge | I2C1 `0x62` + power-good | 2/3 (I2C), 4 | ✅ working |
 | NeoPixel ring, 7 × WS2812B, GRB | SPI MOSI | 10 | ✅ SPI enabled |
 | Rotary encoder with button | GPIO via `pigpiod` | A=27, B=22, BTN=23 | — |
-| 1-Wire | `w1-gpio` | 4 | overlay loaded, no devices |
+| 1-Wire | `w1-gpio` | 4 | overlay removed 2026-09-27 (unused, see below) |
 
 ### Pinout (40-pin header)
 
@@ -162,7 +162,10 @@ UPS-Lite V1.3 board with a CW2015 fuel gauge.
   - SOC: `raw / 256` → percent.
   - Quick-start: `write_word_data(0x62, 0x0A, 0x30)` on initialization.
 - **GPIO4 = power-good**: `HIGH` means external power (micro-USB on the UPS) is connected, `LOW` means running on
-  battery. Verified both ways, including with `w1-gpio` loaded on the same pin.
+  battery. Verified both ways, including back when `w1-gpio` was loaded on the same pin.
+- The `w1-gpio` overlay (1-Wire, GPIO4 by default) was removed on 2026-09-27: with no sensors attached the kernel thread
+  `w1_bus_master1` kept searching the bus at ~30% of one core and "found" phantom devices (`00-6c0000000000`,
+  `00-ac0000000000`) on the power-good pin. The charger signal reads fine without it.
 - Battery on 2026-09-26: ~95–97% in the morning; 85% (3.96 V, on battery) in the evening, after a reboot the gauge
   answered again with the board untouched.
 - MODE `0x0A`: bits `0xC0` = sleep (readings freeze). `knob.py` wakes the gauge with `0x00` if it finds it asleep;
@@ -220,7 +223,7 @@ History: until 2025-09-30 there was a Waveshare UPS HAT (C) based on the INA219 
   - `-t 0`: PWM as the clock source, so it **doesn't conflict with I2S audio** (with `-t 1` the audio broke).
   - `-s 10`: sample rate 10 µs.
   - `-x 0x08C00010`: mask of the GPIOs pigpio is **allowed** to touch: 4, 22, 23, 27. This is a restriction
-    for pigpio, not protection of the pin from the kernel: `w1-gpio` still holds GPIO4 in the kernel.
+    for pigpio, not protection of the pin from the kernel (while `w1-gpio` was loaded, it held GPIO4 in the kernel too).
 - The `RotaryEncoder` and `UPS` classes crash if `pigpiod` isn't running.
 
 ## Software from the old project

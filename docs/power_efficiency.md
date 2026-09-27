@@ -18,6 +18,11 @@ Measurements from 2026-09-26 show the main continuous costs while waiting for th
 - `knob.py` uses about 2% of one core;
 - the assistant uses 164–204 MB RSS, while the whole board has 416 MB RAM.
 
+Battery drain on 2026-09-27, IDLE with the wake word on, `w1-gpio` still loaded: 100% → 76% in 40 minutes, about
+36%/h, i.e. ~2.5–2.75 h from a full charge. Assuming the UPS-Lite's 1000 mAh cell (3.7 Wh), that is ~1.3 W from the
+battery. The same day `w1_bus_master1` was found using ~30% of one core polling an empty 1-Wire bus on GPIO4; the
+overlay has been removed since (see [hardware](hardware.md#ups-lite-battery-cw2015)), so the drain needs re-measuring.
+
 The existing measurements need to be repeated. The wake-word section reports 34% of one core after enabling `QuietGate`,
 while the summary table reports 59% during wake-word waiting. Ambient sound and gate-open time may explain the difference.
 
@@ -166,7 +171,7 @@ The current daemon samples GPIO continuously, and `knob.py` additionally polls t
 - `libgpiod` edge events for the encoder, button and UPS power-good signal;
 - a small event-driven native knob service if the kernel overlays do not handle the required behavior.
 
-Remove the unused `w1-gpio` overlay first or account for its claim on GPIO4. Long press, double click, quadrature decoding and
+The unused `w1-gpio` overlay no longer claims GPIO4 (removed 2026-09-27). Long press, double click, quadrature decoding and
 the charger debounce can all be implemented from timestamped edge events without periodic polling.
 
 ### Make the LED loop event-driven
@@ -179,7 +184,6 @@ optimization compared with wake-word inference and GPIO sampling.
 
 Measure changes individually and keep a rollback path. Candidates in the current boot configuration include:
 
-- remove the unused `w1-gpio` overlay;
 - disable the built-in analog audio driver if only the WM8960 is used;
 - disable the unused UART;
 - avoid loading the display/KMS stack on a permanently headless device;

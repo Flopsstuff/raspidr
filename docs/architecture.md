@@ -79,6 +79,7 @@ keep working while the assistant restarts or is down; the assistant reconnects o
 | short press | assistant busy — interrupt; idle — start listening without the wake word | (the assistant's own animations) | — |
 | double click (within 0.4 s) | shows the battery charge; the first click still goes out as a press right away, the second as `double`, which drops the listening the first one started | charge bar red (empty) → green (full), holds 2.5 s | `battery`: one soft note |
 | battery below 15%, not charging | stays until above 18% or the charger is plugged in | **steady** amber LED 0 on top of everything | `battery_low`: two low notes, once |
+| cell below 3.55 V on battery, 3 reads in a row (~1.5 min) | clean `sudo systemctl poweroff`; the gauge's % is not trusted near empty (on 2026-09-27 it showed 0% an hour before the cell hit 2.83 V and the Pi died without a shutdown; 3.55 V leaves ~1 h in the cell) | the ring drains amber over and over | `battery_low`, then `power_off` |
 | charger plugged in / out (GPIO4) | — | green fills the ring from LED 0 both ways / a full amber ring drains back | `power_on` / `power_off`: three notes up / down |
 
 The battery is read from the UPS-Lite CW2015 gauge (I2C `0x62`) every 30 s; charger changes come from the power-good

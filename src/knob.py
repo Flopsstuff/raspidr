@@ -14,6 +14,9 @@ next to the assistant, so volume and the ring keep working while the assistant r
 
 Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 30 s:
     below 15% on battery — a steady amber LED + two low notes once; off above 18% or on the charger
+    below 3.55 V on battery, 3 reads in a row — the ring drains, two low notes + three down, then a clean poweroff
+                           (the gauge's % is unreliable near empty: it showed 0% an hour before the cell hit 2.8 V
+                           and the Pi just died — no shutdown, a deep-discharged LiPo, a risk for the SD card)
     charger in / out     — green fills the ring + three notes up / amber drains + three notes down
 
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
@@ -47,6 +50,7 @@ DOUBLE_CLICK_S = 0.4
 BATTERY_POLL_S = 30
 GAUGE_TRIES, GAUGE_RETRY_S = 5, 0.06  # the gauge drops ~1 read in 3 in a regular rhythm; a retry gets through
 LOW_ON, LOW_OFF = 15.0, 18.0  # % — low battery indicator with hysteresis
+SHUTDOWN_V, SHUTDOWN_READS = 3.55, 3  # cell volts on battery, reads in a row (a load dip mustn't power it off)
 TICK_GAP_S = 0.15
 CARD = "wm8960soundcard"
 LEVELS = [round(94 + 33 * i / 23) for i in range(24)]  # `Speaker` values (1 dB units), 4 steps per LED
@@ -117,6 +121,7 @@ class Gauge:
         return min(100.0, self._word(0x04) / 256), self._word(0x02) * 0.305 / 1000
 
     def read(self):
+        """→ (percent, volts), or (None, None) when the gauge doesn't answer."""
         for attempt in range(GAUGE_TRIES):
             try:
                 soc, volts = self._read_once()
@@ -128,11 +133,11 @@ class Gauge:
             if self.ok is not False:
                 log(f"[BAT] UPS не отвечает ({GAUGE_TRIES} попыток: {err}) — проверь плату UPS (pogo-пины)")
             self.ok = False
-            return None
+            return None, None
         if not self.ok:
             log(f"[BAT] заряд {soc:.0f}%, {volts:.2f} В")
         self.ok = True
-        return soc
+        return soc, volts
 
     def close(self):
         self.bus.close()
@@ -261,6 +266,7 @@ class Knob:
         self.encoder = Encoder()
         self.gauge = Gauge()
         self.soc, self.low = None, False
+        self.volts, self.under = None, 0  # under: reads in a row below SHUTDOWN_V
         self.charging = self.encoder.charging()
         self.battery_now = threading.Event()  # poll right away (charger plugged in/out)
         self.server = Server(KNOB_SOCKET, self.on_line, self.wake_line, lambda: self.ring.set_mode("off"))
@@ -306,7 +312,8 @@ class Knob:
             self.battery_now.clear()
 
     def poll_battery(self):
-        self.soc = self.gauge.read()
+        self.soc, self.volts = self.gauge.read()
+        self.check_shutdown()
         low = self.soc is not None and not self.charging and self.soc < (LOW_OFF if self.low else LOW_ON)
         if low != self.low:
             self.low = low
@@ -314,6 +321,28 @@ class Knob:
             if low:
                 play("battery_low")
             log(f"[BAT] низкий заряд: {self.soc:.0f}%" if low else "[BAT] заряд в норме")
+
+    def check_shutdown(self):
+        if self.volts is None:
+            return  # no read — neither a reason to power off nor to reset the count
+        if self.charging or self.volts >= SHUTDOWN_V:
+            if self.under:
+                log(f"[BAT] {self.volts:.2f} В — выключение отменено")
+            self.under = 0
+            return
+        self.under += 1
+        log(f"[BAT] {self.volts:.2f} В < {SHUTDOWN_V} В на батарее ({self.under}/{SHUTDOWN_READS})")
+        if self.under >= SHUTDOWN_READS:
+            self.shutdown()
+
+    def shutdown(self):
+        """Battery empty: say goodbye on the ring and with sound, then a clean poweroff (flop has sudo without a password)."""
+        log(f"[BAT] батарея разряжена ({self.volts:.2f} В) — выключаюсь")
+        self.ring.overlay(lambda t: power_frame(False, t % 1.2))  # drains again and again until the power goes
+        play("battery_low").wait()
+        play("power_off").wait()
+        time.sleep(0.5)
+        subprocess.run(["sudo", "-n", "systemctl", "poweroff"])
 
     def show_battery(self):
         if self.soc is None:

@@ -12,8 +12,8 @@ architecture, hardware quirks and wake word training are documented there.
 ## Layout
 
 - `src/` — runs on the Pi. Entry point `src/assistant.py` (state machine: wake word → greeting → listen →
-  Groq STT → Hermes stream → Groq TTS). `src/knob.py` is a separate process that owns the encoder, the LED ring and
-  the volume; the assistant talks to it over a unix socket. `src/wakeword.py` is also a standalone detector.
+  Groq STT → Hermes stream → Groq TTS). `src/knob.py` is a separate process that owns the encoder, the LED ring,
+  the volume and the Triki BLE token (`src/triki.py`, a wireless knob); the assistant talks to it over a unix socket. `src/wakeword.py` is also a standalone detector.
 - `src/tools/` — hardware checks (`hwtest.py`), microphone probes, sample recorder, procedural sounds.
 - `training/` — wake word training (Mac only, Python 3.11 venv `.venv-train` with torch 2.2.2 and `numpy<2`).
 - `models/`, `sounds/` — binary assets tracked with Git LFS.
@@ -34,8 +34,8 @@ There is no test suite; `src/tools/hwtest.py` is a manual hardware check on the 
 ## Conventions
 
 - Configuration and all hosts/addresses live in `.env` (template: `.env.example`); never hardcode IPs, hostnames or keys.
-- Comments, docstrings and docs are in English. Runtime log messages and Russian data (system prompt, phrase lists,
-  the wake phrase «хэй пидор») stay Russian.
+- Comments, docstrings, docs and runtime log messages are in English (older log messages are still Russian — new ones
+  aren't). Russian data (system prompt, phrase lists, the wake phrase «хэй пидор») stays Russian.
 - Commit messages start with a gitmoji (`✨`, `🐛`, `♻️`, `📝`, …) followed by an English sentence.
 - Voice recordings (`hey-peedor/`, `recordings/`) and datasets (`training/data/`) are never committed.
 

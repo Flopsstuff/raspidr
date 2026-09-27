@@ -199,7 +199,7 @@ class Assistant:
             self.announce.cancel.set()
         self.loop.stop()
         self.player.stop()
-        self.log("[STOP] перебили")
+        self.log("[STOP] interrupted")
         self.set_state("idle")
 
     # ------------------------------------------------------------ answer: STT → Hermes → TTS
@@ -232,13 +232,13 @@ class Assistant:
                     except Exception as e:
                         if attempt == 2:
                             raise
-                        self.log(f"[STT#{piece.n}] {str(e)[:80]} — ещё раз")
+                        self.log(f"[STT#{piece.n}] {str(e)[:80]} — once more")
                 piece.text = clean_stt(raw)
                 self.log(f"[STT#{piece.n} {time.time() - t:.1f}s] «{piece.text}»"
-                         + ("" if raw.strip() == piece.text else f"  (сырой: «{raw}»)"))
+                         + ("" if raw.strip() == piece.text else f"  (raw: «{raw}»)"))
             except Exception as e:
                 piece.error = e
-                self.log(f"[STT#{piece.n}] ошибка: {str(e)[:120]}")
+                self.log(f"[STT#{piece.n}] error: {str(e)[:120]}")
             finally:
                 piece.done.set()
 
@@ -254,11 +254,11 @@ class Assistant:
         if any(p.error for p in pieces):
             t = time.time()
             text = clean_stt(voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор"))
-            self.log(f"[STT целиком {time.time() - t:.1f}s] «{text}»")
+            self.log(f"[STT whole {time.time() - t:.1f}s] «{text}»")
             return text
         text = " ".join(p.text for p in pieces if p.text)
         if len(pieces) > 1:
-            self.log(f"[ФРАЗА {len(pieces)} кусков] «{text}»")
+            self.log(f"[PHRASE {len(pieces)} pieces] «{text}»")
         return text
 
     def _answer(self, job, pcm, text, pieces=None):
@@ -271,7 +271,7 @@ class Assistant:
                 t0 = time.time()
                 raw = voice.stt(voice.pcm_to_wav(pcm.tobytes()), "command.wav", lang="ru", prompt="хэй пидор")
                 text = clean_stt(raw)
-                self.log(f"[STT {time.time() - t0:.1f}s] «{text}»" + ("" if raw.strip() == text else f"  (сырой: «{raw}»)"))
+                self.log(f"[STT {time.time() - t0:.1f}s] «{text}»" + ("" if raw.strip() == text else f"  (raw: «{raw}»)"))
                 if not text:
                     return
             if job.cancel.is_set():
@@ -289,7 +289,7 @@ class Assistant:
                 for delta in hermes.stream_chat(messages, cancel=job.cancel):
                     if first is None:
                         first = time.time() - t1
-                        self.log(f"[LLM первый токен {first:.1f}s]")
+                        self.log(f"[LLM first token {first:.1f}s]")
                     answer += delta
                     for chunk in chunker.feed(delta):
                         tts_q.put(chunk)
@@ -347,7 +347,7 @@ class Assistant:
             if not job.long and waited > self.args.long_think:
                 # Hermes is going to memory/tools — say "one sec" once and switch the animation
                 job.long = True
-                self.log("[THINK] долго — заполнитель")
+                self.log("[THINK] taking long — filler")
                 self.loop.stop()
                 self.player.enqueue(random.choice(self.waits))
                 self.ring.set_mode("think_long")
@@ -372,7 +372,7 @@ class Assistant:
         chunker = Chunker()
         chunks = chunker.feed(text) + chunker.flush()
         if not chunks:
-            raise ValueError("нечего озвучивать")
+            raise ValueError("nothing to say")
         job = SimpleNamespace(text=text, audio=queue.Queue(), done=threading.Event(), cancel=threading.Event(),
                               synthesized=0, error=None)
         self.announcements.put(job)
@@ -410,7 +410,7 @@ class Assistant:
         if not job.done.is_set() or not job.audio.empty() or self.player.busy():
             return False
         if job.error:
-            self.log(f"[SAY] ошибка: {job.error}")
+            self.log(f"[SAY] error: {job.error}")
         if job.synthesized and not job.cancel.is_set():
             # a reply to it goes to Hermes: let it know what the speaker just said
             if time.time() - self.last_turn > HISTORY_TTL:
@@ -425,8 +425,9 @@ class Assistant:
         if not self.start_announce():
             return
         while not self.pump_announce():
-            if self.button.event.is_set():
+            if self.button.event.is_set() or self.button.summon.is_set():
                 self.button.event.clear()
+                self.button.summon.clear()
                 self.interrupt()
                 return
             time.sleep(0.05)
@@ -447,16 +448,17 @@ class Assistant:
         model = NpzModel(resolve_model(a.model, a.framework))
         feats = fast_features(a.framework)
         vad = VAD()
-        self.log(f"[RUN] модель {model.name}, порог {a.threshold}; "
-                 + ("Enter" if sys.platform == "darwin" else "кнопка энкодера") + " — перебить или начать слушать")
+        self.log(f"[RUN] model {model.name}, threshold {a.threshold}; "
+                 + ("Enter" if sys.platform == "darwin" else "the encoder button") + " — interrupt or start listening")
         while True:
             if not self.button.awake.is_set():
-                self.log("[MUTE] wake word и микрофон выключены")
+                self.log("[MUTE] wake word and microphone off")
                 while not self.button.awake.wait(0.2):
                     self.announce_muted()
-                self.log("[MUTE] снова слушаю")
+                self.log("[MUTE] listening again")
                 self.button.event.clear()  # presses while the microphone was off don't start listening now
                 self.button.double.clear()
+                self.button.summon.clear()
             self.listen(model, feats, vad)
 
     def listen(self, model, feats, vad):
@@ -504,7 +506,7 @@ class Assistant:
             if carry:  # the phrase ended on a short bit — send it too, clean_stt drops junk
                 self.stt_piece(pieces, np.concatenate(carry))
                 carry = []
-            self.log(f"[LISTEN] фраза {len(rec) * FRAME_S:.1f} с, кусков {len(pieces)}" + why)
+            self.log(f"[LISTEN] phrase {len(rec) * FRAME_S:.1f} s, {len(pieces)} pieces" + why)
             self.start_answer(pcm=np.concatenate(rec), pieces=pieces)
 
         try:
@@ -514,6 +516,16 @@ class Assistant:
                         self.interrupt()
                     return
                 now = time.time()
+                if self.button.summon.is_set():  # the Triki token's button
+                    self.button.summon.clear()
+                    if self.state != "idle" or followup_at is not None:
+                        followup_at = None
+                        self.interrupt()
+                        mute_until = now + 1.0
+                    else:
+                        self.log("[TRIKI] press — greeting, then listening")
+                        self.greet()
+                    continue
                 if self.button.event.is_set():
                     self.button.event.clear()
                     if self.state != "idle" or followup_at is not None:
@@ -521,7 +533,7 @@ class Assistant:
                         self.interrupt()
                         mute_until = now + 1.0
                     else:
-                        self.log("[BTN] нажатие — слушаю без wake word")
+                        self.log("[BTN] press — listening without the wake word")
                         start_listen(a.listen_timeout)
                         button_listen_t = now
                     continue
@@ -529,15 +541,15 @@ class Assistant:
                     self.button.double.clear()
                     if self.state == "listen" and not speech and now - button_listen_t < 1.0:
                         # it was a double click (battery), not a request to listen
-                        self.log("[BTN] двойной клик — не слушаю")
+                        self.log("[BTN] double click — not listening")
                         self.set_state("idle")
                         mute_until = now + 0.5
                         continue
 
                 if gate and now - gate_log_t >= GATE_LOG_S:
                     if gate.seen:
-                        self.log(f"[GATE] за {GATE_LOG_S // 60} мин ожидания модель считала {gate.fed / gate.seen:.0%} "
-                                 f"кадров, фон {gate.floor_dbfs():.0f} dBFS")
+                        self.log(f"[GATE] in {GATE_LOG_S // 60} min of waiting the model scored {gate.fed / gate.seen:.0%} "
+                                 f"of the frames, background {gate.floor_dbfs():.0f} dBFS")
                     gate.seen = gate.fed = 0
                     gate_log_t = now
 
@@ -550,7 +562,7 @@ class Assistant:
                 if self.state == "idle":
                     if followup_at is not None and now >= followup_at:
                         followup_at = None
-                        self.log(f"[LISTEN] продолжение разговора — жду {a.followup_timeout:g} с")
+                        self.log(f"[LISTEN] follow-up — waiting {a.followup_timeout:g} s")
                         start_listen(a.followup_timeout)
                         continue
                     if followup_at is None and self.start_announce():  # a /say request, the speaker is free
@@ -589,7 +601,7 @@ class Assistant:
                             silence, seg_voiced = 0.0, FRAME_S
                             preroll.clear()
                         elif now - self.state_t > listen_timeout:
-                            self.log("[LISTEN] тишина — не дождались фразы")
+                            self.log("[LISTEN] silence — no phrase came")
                             self.set_state("idle")
                             mute_until = now + 0.5
                         continue
@@ -613,7 +625,7 @@ class Assistant:
                     if silence >= a.end_silence:
                         finish_phrase("")
                     elif len(rec) * FRAME_S >= a.max_listen:
-                        finish_phrase(", упёрлись в --max-listen")
+                        finish_phrase(", hit --max-listen")
 
                 elif self.state in ("think", "speak"):
                     if self.poll_answer() and self.state == "idle":
@@ -649,7 +661,7 @@ def start_api(bot):
     except RuntimeError:
         token = ""
     if not token:  # an empty token would let "Authorization: Bearer " in
-        bot.log("[API] RASPIDR_API_TOKEN не задан — /say выключен")
+        bot.log("[API] RASPIDR_API_TOKEN is not set — /say is off")
         return
     try:
         port = int(voice.api_key("RASPIDR_API_PORT"))
@@ -658,9 +670,9 @@ def start_api(bot):
     try:
         api.start(bot.say, bot.log, token, port)
     except OSError as e:
-        bot.log(f"[API] порт {port} недоступен: {e}")
+        bot.log(f"[API] port {port} unavailable: {e}")
         return
-    bot.log(f"[API] POST /say на порту {port}")
+    bot.log(f"[API] POST /say on port {port}")
 
 
 def main():

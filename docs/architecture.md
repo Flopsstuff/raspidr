@@ -18,6 +18,7 @@ wake word training: [wakeword_training.md](wakeword_training.md).
  │   Player / LoopPlayer ─ aplay (dmix) ─ TPA3118 speakers      │ HTTPS  │ Groq: STT whisper-large-v3-turbo │
  │   ↕ unix socket (ring modes / press, wake on|off)            │ ─────► │       TTS orpheus-v1 (troy)      │
  │   src/knob.py — encoder (pigpiod), leds.Ring (SPI), amixer   │        │ xAI:  TTS (fallback, leo)        │
+ │     └ src/triki.py — Triki BLE token (bleak → BlueZ)  ◄ BLE ─┼─ Żabka Triki cap (wireless knob)       │
  └──────────────────────────────────────────────────────────────┘        │                                  │
  Mac (development): code, wake word training, deploy.sh → rsync          └──────────────────────────────────┘
 ```
@@ -94,10 +95,32 @@ assistant → knob:  mode off|greet|listen|think|think_long|speak|error
 knob → assistant:  wake on | wake off   (right after connecting and on every toggle)
                    press                (short press)
                    double               (second click of a double click)
+                   summon               (Triki button: busy — interrupt, idle — greeting + listening)
 ```
 
 When the assistant disconnects, the ring goes to `off`. `assistant.py --leds pi` drives the ring and the button directly
 (no knob service); `wakeword.py` and `tools/hwtest.py` also drive the ring directly, so stop the knob before running them.
+
+### Triki token: a wireless knob
+
+The knob service also runs `src/triki.py` in its own thread: a BLE client (bleak → BlueZ) for the Żabka Triki bottle
+cap (nRF52810 + LSM6DSL). Protocol and radio details are in [hardware.md](hardware.md#triki-ble-token).
+
+| Action | What happens |
+|---|---|
+| button, token asleep | it wakes and advertises; caught within ~1 s → `summon`: greeting + listening (or interrupt, if busy); connect, IMU stream 26 Hz |
+| button, connected | `summon` again — the second press cancels the listening the first one started |
+| cap up / PCB up (held still 0.4 s) | microphone off / on — the same as the encoder's long press, with its sound and ring |
+| turn it lying flat | volume, one step per 15°, clockwise seen from above = louder (either face up) |
+| 1 min without motion or presses | disconnect, `tick_down` |
+
+The token has no sleep command: it sleeps on its own ~180 s after a disconnect or after its button was last pressed,
+never while connected, and a press while it's still advertising only restarts that timer — nothing on air tells it
+apart. So after the idle disconnect the service waits ("cooling"): gone from the air → asleep, the next sighting is a
+press. Still on air 190 s after the disconnect → the button was pressed meanwhile → reconnect quietly (`tick_up` +
+the volume bar, no greeting — it would come minutes late). A lost link (out of range) reconnects quietly too.
+Scanning runs 0.2 s every second. `TRIKI_NAME` in `.env` is the advertised name prefix (default `Triki`, empty — off).
+`tools/triki_probe.py` explores the token by hand: `--watch` (air only), a streaming session, `--cmd <hex>`.
 
 ### Wake word CPU
 
@@ -138,6 +161,7 @@ utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (s
 | `assistant.py` | main process: state machine, STT → Hermes → TTS pipeline, stage log with timings |
 | `wakeword.py` | `NpzModel` (custom numpy model), `resolve_model`, `Greeter`; run on its own, a detector without the assistant (`--test`, `--wav`) |
 | `knob.py` | knob service: encoder → volume / wake word on-off / interrupt / battery bar, owns the ring, UPS battery (CW2015 + GPIO4), unix socket for the assistant |
+| `triki.py` | Triki BLE token client (runs inside the knob): scan / connect / IMU stream → gestures (summon, flip, turn) |
 | `leds.py` | `Ring`: modes `off/greet/listen/think/think_long/speak/error`, 25 FPS animation thread, overlays for the knob feedback; backends `pi` / `console` (Mac) / `off` |
 | `audio_io.py` | `Mic` (arecord / ffmpeg avfoundation on the Mac), `Player` (queue), `LoopPlayer` (looping background) |
 | `api.py` | `/say` HTTP API for other agents (bearer token), runs inside the assistant |
@@ -148,11 +172,12 @@ utterance (PCM) → voice.stt(ru, prompt «хэй пидор») → clean_stt (s
 | `tools/micmeter.py`, `tools/micprobe.py` | microphone levels on the ring; "which mic goes to which channel" |
 | `tools/record_samples.py` | records phrase samples, prompted by the ring → `recordings/` |
 | `tools/make_sounds.py` | procedural sounds (waiting drops, knob feedback) |
+| `tools/triki_probe.py` | Triki token by hand: air watch (`--watch`, scan duty `--on/--off`), a streaming session with gestures, raw RX commands (`--cmd`) |
 | `tools/powerlog.py` | power draw from the battery: logs charge / volts / charger / CPU to a CSV, `report` turns stretches on battery into watts (≈, the gauge has no current sensor) |
 
 Threads in `assistant.py`: main (reads the microphone in 80 ms frames, never blocks), response (STT + Hermes),
 TTS worker, player, background player, knob socket. In `knob.py`: main (button polling 50 Hz, volume), ring animation,
-encoder callbacks (pigpio), socket accept + one reader per client.
+encoder callbacks (pigpio), socket accept + one reader per client, Triki (asyncio loop; hands events to main via a queue).
 
 ## Audio on the Pi
 
@@ -173,7 +198,8 @@ encoder callbacks (pigpio), socket accept + one reader per client.
 `.env` in the project root — copy [`.env.example`](https://github.com/Flopsstuff/raspidr/blob/main/.env.example), every
 variable is explained there. It is gitignored and shipped to the Pi by `deploy.sh` (mode 600):
 `PI_HOST`, `PI_DIR` (deploy target), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `GROQ_API_KEY`,
-`XAI_API_KEY` (also used by the training scripts), `RASPIDR_API_TOKEN`, `RASPIDR_API_PORT` (the `/say` API). No hosts or addresses are hardcoded anywhere else.
+`XAI_API_KEY` (also used by the training scripts), `RASPIDR_API_TOKEN`, `RASPIDR_API_PORT` (the `/say` API),
+`TRIKI_NAME` (the Triki token). No hosts or addresses are hardcoded anywhere else.
 
 Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microphone), `--no-wake`,
 `--leds knob|pi|console|off` (Pi default `knob`), `--gate-db 8` (0 — wake word models on every frame),

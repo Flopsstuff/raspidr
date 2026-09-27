@@ -4,3 +4,5 @@ numpy<2; platform_machine == "aarch64"
 # NeoPixel ring over SPI — Pi only
 adafruit-blinka; platform_machine == "aarch64"
 adafruit-circuitpython-neopixel; platform_machine == "aarch64"
+# Triki BLE token (src/triki.py) — BlueZ over D-Bus, Pi only
+bleak; platform_machine == "aarch64"

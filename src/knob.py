@@ -19,12 +19,18 @@ Battery (UPS-Lite: CW2015 gauge on I2C 0x62, power-good on GPIO4), polled every 
                            and the Pi just died — no shutdown, a deep-discharged LiPo, a risk for the SD card)
     charger in / out     — green fills the ring + three notes up / amber drains + three notes down
 
+Triki BLE token (src/triki.py) — a wireless second knob: its button → "summon" (greeting + listening, or interrupt),
+cap up / PCB up → microphone off / on (same as the long press), turning it flat → volume. Let go after 1 min idle —
+tick down; back without a press (quiet reconnect) — tick up + the volume bar. TRIKI_NAME in .env: the advertised
+name prefix to catch (default "Triki"; empty — off).
+
 Unix socket (controls.KNOB_SOCKET), newline-separated text:
     assistant → knob:  mode <leds mode>
-    knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double
+    knob → assistant:  wake on | wake off  (on connect and on every toggle), press, double, summon
 """
 import json
 import os
+import queue
 import re
 import signal
 import socket
@@ -34,6 +40,7 @@ import sys
 import threading
 import time
 
+import voice
 from controls import KNOB_SOCKET
 from leds import (LOW_BATTERY, MODES, MUTED_DOT, OFF, Ring, battery_frame, power_frame, volume_frame,
                   wake_off_frame, wake_on_frame)
@@ -131,11 +138,11 @@ class Gauge:
                 time.sleep(GAUGE_RETRY_S)
         else:
             if self.ok is not False:
-                log(f"[BAT] UPS не отвечает ({GAUGE_TRIES} попыток: {err}) — проверь плату UPS (pogo-пины)")
+                log(f"[BAT] the UPS doesn't answer ({GAUGE_TRIES} tries: {err}) — check the UPS board (pogo pins)")
             self.ok = False
             return None, None
         if not self.ok:
-            log(f"[BAT] заряд {soc:.0f}%, {volts:.2f} В")
+            log(f"[BAT] charge {soc:.0f}%, {volts:.2f} V")
         self.ok = True
         return soc, volts
 
@@ -151,7 +158,7 @@ class Encoder:
 
         self.pi = pigpio.pi()
         if not self.pi.connected:
-            raise RuntimeError("pigpiod не запущен")
+            raise RuntimeError("pigpiod is not running")
         for pin in (ENC_A, ENC_B, ENC_BTN):
             self.pi.set_mode(pin, pigpio.INPUT)
             self.pi.set_pull_up_down(pin, pigpio.PUD_UP)
@@ -229,7 +236,7 @@ class Server:
             threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
 
     def _serve(self, conn):
-        log("[KNOB] ассистент подключился")
+        log("[KNOB] the assistant connected")
         self.send(self.on_connect(), conn)
         try:
             for line in conn.makefile(encoding="utf-8"):
@@ -239,7 +246,7 @@ class Server:
         with self.lock:
             self.clients.remove(conn)
         conn.close()
-        log("[KNOB] ассистент отключился")
+        log("[KNOB] the assistant disconnected")
         self.on_disconnect()
 
     def send(self, line, conn=None):
@@ -270,10 +277,11 @@ class Knob:
         self.charging = self.encoder.charging()
         self.battery_now = threading.Event()  # poll right away (charger plugged in/out)
         self.server = Server(KNOB_SOCKET, self.on_line, self.wake_line, lambda: self.ring.set_mode("off"))
-        log(f"[KNOB] громкость {self.volume.level + 1}/{len(LEVELS)}, wake word "
-            + ("вкл" if self.awake else "ВЫКЛ") + f", сокет {KNOB_SOCKET}; питание: "
-            + ("зарядка" if self.charging else "батарея"))
+        log(f"[KNOB] volume {self.volume.level + 1}/{len(LEVELS)}, wake word "
+            + ("on" if self.awake else "OFF") + f", socket {KNOB_SOCKET}; power: "
+            + ("charger" if self.charging else "battery"))
         threading.Thread(target=self._battery_loop, daemon=True).start()
+        self.triki = start_triki()
 
     def wake_line(self):
         return "wake on" if self.awake else "wake off"
@@ -290,7 +298,33 @@ class Knob:
         self.ring.overlay(wake_on_frame if self.awake else wake_off_frame)
         self.ring.set_status(OFF if self.awake else MUTED_DOT)
         self.server.send(self.wake_line())
-        log("[KNOB] wake word " + ("вкл" if self.awake else "ВЫКЛ"))
+        log("[KNOB] wake word " + ("on" if self.awake else "OFF"))
+
+    def set_awake(self, awake):
+        if awake != self.awake:
+            self.toggle()
+
+    def triki_events(self):
+        while self.triki:
+            try:
+                name, arg = self.triki.events.get_nowait()
+            except queue.Empty:
+                return
+            if name == "log":
+                log(arg)
+            elif name == "summon":
+                self.server.send("summon")
+            elif name == "face":
+                log("[TRIKI] " + ("cap up — microphone off" if arg == "cap" else "PCB up — microphone on"))
+                self.set_awake(arg == "pcb")
+            elif name == "turn":
+                self.turn(arg)
+            elif name == "link" and arg == "up":  # back after a quiet reconnect: a tick + the volume bar = "turn me"
+                level = self.volume.level
+                self.ring.overlay(lambda t: volume_frame(level + 1, len(LEVELS), t, False))
+                play("tick_up")
+            elif name == "link":
+                play("tick_down")
 
     def turn(self, delta):
         moved = self.volume.step(delta)
@@ -302,7 +336,7 @@ class Knob:
                 play("bump")
             elif self.tick is None or (self.tick.poll() is not None and time.time() - self.tick_t >= TICK_GAP_S):
                 self.tick, self.tick_t = play("tick_up" if delta > 0 else "tick_down"), time.time()
-        log(f"[KNOB] громкость {level + 1}/{len(LEVELS)}" + ("" if moved else " — предел"))
+        log(f"[KNOB] volume {level + 1}/{len(LEVELS)}" + ("" if moved else " — limit"))
 
     def _battery_loop(self):
         """Own thread: a gauge read with retries takes up to ~0.3 s, the main loop must keep polling the button."""
@@ -320,24 +354,24 @@ class Knob:
             self.ring.set_badge(LOW_BATTERY if low else None)
             if low:
                 play("battery_low")
-            log(f"[BAT] низкий заряд: {self.soc:.0f}%" if low else "[BAT] заряд в норме")
+            log(f"[BAT] low battery: {self.soc:.0f}%" if low else "[BAT] battery OK")
 
     def check_shutdown(self):
         if self.volts is None:
             return  # no read — neither a reason to power off nor to reset the count
         if self.charging or self.volts >= SHUTDOWN_V:
             if self.under:
-                log(f"[BAT] {self.volts:.2f} В — выключение отменено")
+                log(f"[BAT] {self.volts:.2f} V — poweroff cancelled")
             self.under = 0
             return
         self.under += 1
-        log(f"[BAT] {self.volts:.2f} В < {SHUTDOWN_V} В на батарее ({self.under}/{SHUTDOWN_READS})")
+        log(f"[BAT] {self.volts:.2f} V < {SHUTDOWN_V} V on battery ({self.under}/{SHUTDOWN_READS})")
         if self.under >= SHUTDOWN_READS:
             self.shutdown()
 
     def shutdown(self):
         """Battery empty: say goodbye on the ring and with sound, then a clean poweroff (flop has sudo without a password)."""
-        log(f"[BAT] батарея разряжена ({self.volts:.2f} В) — выключаюсь")
+        log(f"[BAT] battery empty ({self.volts:.2f} V) — powering off")
         self.ring.overlay(lambda t: power_frame(False, t % 1.2))  # drains again and again until the power goes
         play("battery_low").wait()
         play("power_off").wait()
@@ -347,12 +381,12 @@ class Knob:
     def show_battery(self):
         if self.soc is None:
             play("bump")
-            log("[BAT] заряд неизвестен — UPS не отвечает")
+            log("[BAT] charge unknown — the UPS doesn't answer")
             return
         soc = self.soc
         self.ring.overlay(lambda t: battery_frame(soc, t))
         play("battery")
-        log(f"[BAT] заряд {soc:.0f}%" + (", заряжается" if self.charging else ""))
+        log(f"[BAT] charge {soc:.0f}%" + (", charging" if self.charging else ""))
 
     def power_changed(self):
         charging = self.encoder.charging()
@@ -361,7 +395,7 @@ class Knob:
         self.charging = charging
         self.ring.overlay(lambda t: power_frame(charging, t))
         play("power_on" if charging else "power_off")
-        log("[BAT] зарядка подключена" if charging else "[BAT] зарядка отключена — на батарее")
+        log("[BAT] charger plugged in" if charging else "[BAT] charger unplugged — on battery")
         self.battery_now.set()
 
     def run(self):
@@ -377,12 +411,12 @@ class Knob:
             elif low == 0 and pressed_at is not None:
                 if not fired:
                     if now - last_click <= DOUBLE_CLICK_S:
-                        log("[KNOB] двойной клик")
+                        log("[KNOB] double click")
                         self.server.send("double")
                         self.show_battery()
                         last_click = 0.0
                     else:
-                        log("[KNOB] нажатие")
+                        log("[KNOB] press")
                         self.server.send("press")
                         last_click = now
                 pressed_at = None
@@ -394,12 +428,33 @@ class Knob:
                 self.turn(1 if steps > 0 else -1)
             if self.encoder.take_power_flips():
                 self.power_changed()
+            self.triki_events()
 
     def close(self):
+        if self.triki:
+            self.triki.close()
+            while not self.triki.events.empty():  # the main loop is gone: print what the disconnect logged
+                name, arg = self.triki.events.get_nowait()
+                if name == "log":
+                    log(arg)
         self.server.close()
         self.encoder.close()
         self.gauge.close()
         self.ring.close()
+
+
+def start_triki():
+    """The Triki token client, or None when TRIKI_NAME is set empty in .env."""
+    try:
+        prefix = voice.api_key("TRIKI_NAME")
+    except RuntimeError:
+        prefix = "Triki"
+    if not prefix:
+        log("[TRIKI] TRIKI_NAME is empty — token off")
+        return None
+    from triki import Triki
+
+    return Triki(prefix)
 
 
 def main():
@@ -407,7 +462,7 @@ def main():
     try:
         knob = Knob()
     except Exception as e:
-        sys.exit(f"[KNOB] не запустился: {e}")
+        sys.exit(f"[KNOB] failed to start: {e}")
     try:
         knob.run()
     except KeyboardInterrupt:

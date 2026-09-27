@@ -245,6 +245,34 @@ Python packages in `~/venv`: `adafruit-circuitpython-neopixel`, `Adafruit-Blinka
 
 The old code launched audio subprocesses (`aplay`, `mpv`) with `XDG_RUNTIME_DIR=/tmp/xdg_runtime`.
 
+## Triki BLE token
+
+A Żabka Triki bottle cap (nRF52810 + LSM6DSL, firmware `3.2.1-A`) used as a wireless knob by `src/triki.py`. Community
+notes: [Flopsstuff/triki](https://github.com/Flopsstuff/triki), [TrikiEmu](https://github.com/Kubixpro1/TrikiEmu)
+(the Żappka app's traffic), [TrikiMute](https://github.com/tweetgeek/TrikiMute) (sleep timing). What we checked on ours:
+
+- **Advertising:** `Triki <serial>`, random static address, ADV_IND ~16/s, the payload never changes (manufacturer
+  data `a00a`). No pairing, the link is open.
+- **GATT:** Nordic UART Service — RX `6e400002-…` (commands), TX `6e400003-…` (notify), `6e400004-…` (bit 0 = LED);
+  Battery `0x2A19`; Device Information with only the firmware revision.
+- **IMU stream:** write `20 10 00 D0 07 <rate LE16> 03` to RX (±16 g, ±2000 °/s, 26/52/104/208/416 Hz) → answer
+  `21 00 00 00 00`, then 14-byte frames `22 <button> gx gy gz ax ay az` (int16 LE; /14.286 = °/s, /2048 = g),
+  cut across notifications at will. Byte 1 = the button (00/01, 4 frames per quick press; the LED doesn't blink on
+  presses while connected). `20 00 00 00 00 00 00` stops the stream — and then presses aren't reported either.
+- **Axes:** +Z out of the PCB (the «Ż» side), −Z out of the metal cap; at rest the sky-facing axis reads +1 g. The gyro
+  zero offset of ours is ~(2.0, −4.4, −0.3) °/s.
+- **Other opcodes** belong to the Żappka app's session authentication (`0a`/`09` + a random id, answered with a
+  device key). Bare `0a`, `42`, `44` reset the token (`42` also leaves the LED on), `46` does nothing; none of them
+  makes it sleep. There's no known sleep or power-off command.
+- **Sleep:** it advertises ~180 s (measured 172–180 s) after a button press or a disconnect, then sleeps; a press
+  while advertising restarts the timer (disconnect 14:27:09, press ~14:28:30, gone 14:31:31). Connected, it never sleeps.
+- **Pi Bluetooth:** a process killed mid-session leaves BlueZ holding the link — the token stays awake and invisible
+  (`bluetoothctl disconnect <addr>`; `triki.py` drops such links on start). The Broadcom controller stops delivering
+  advertising reports a few seconds into a continuous LE scan — from all devices at once, although the scan stays on
+  (`btmon`: interval = window = 11.25 ms, no duplicate filter); only disabling and re-enabling the scan revives it,
+  which BlueZ does every 10.24 s (the kernel's LE discovery timeout) → dead zones of up to 9 s. Scanning 0.2 s every
+  second never hits it: 88 windows, none empty; the token is caught within ≤1 s in 95% of the windows.
+
 ## Gotchas and observations
 
 - `i2cdetect`/`i2cget` live in `/usr/sbin`; a regular user over ssh doesn't have them in `PATH`,

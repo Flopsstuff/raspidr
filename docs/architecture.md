@@ -8,6 +8,8 @@ wake word training: [wakeword_training.md](wakeword_training.md).
 
 ## Components
 
+![RaspiDR architecture: hardware, the two Pi services, Hermes on the LAN, Groq / xAI in the cloud](images/architecture.jpg)
+
 ```
  ┌──────────── Pi Zero 2 W  ($PI_HOST) ─────────────────────────┐        ┌─ LAN ────────────────────────────┐
  │ WM8960 mic ─ arecord 16 kHz ─┐                               │        │ Hermes Agent (Nous Research)     │

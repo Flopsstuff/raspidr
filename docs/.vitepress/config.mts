@@ -12,6 +12,7 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
+      { text: 'Demo', link: '/demo' },
       { text: 'Architecture', link: '/architecture' },
       { text: 'Hardware', link: '/hardware' },
       { text: 'Wake word training', link: '/wakeword_training' },
@@ -21,6 +22,7 @@ export default defineConfig({
         text: 'Documentation',
         items: [
           { text: 'Overview', link: '/' },
+          { text: 'Demo', link: '/demo' },
           { text: 'Architecture', link: '/architecture' },
           { text: 'Hardware', link: '/hardware' },
           { text: 'Wake word training', link: '/wakeword_training' },

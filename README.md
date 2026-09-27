@@ -5,11 +5,18 @@ greeting → utterance recording → Groq STT → Hermes LLM agent → Groq TTS,
 
 ![RaspiDR architecture](docs/images/architecture.jpg)
 
-**Documentation:** [flopsstuff.github.io/raspidr](https://flopsstuff.github.io/raspidr/) (sources in [docs/](docs/index.md))
+<p align="center">
+  <img src="docs/images/photo-front.jpg" alt="RaspiDR from the front: the stereo speaker pair" width="320">
+  <img src="docs/images/photo-back.jpg" alt="RaspiDR from the back: rotary encoder, LED ring, WM8960 HAT over the Pi Zero 2 W and the UPS-Lite battery" width="320">
+</p>
+
+**Documentation:** [flopsstuff.github.io/raspidr](https://flopsstuff.github.io/raspidr/) (sources in [docs/](docs/index.md)) ·
+**Demo video:** [flopsstuff.github.io/raspidr/demo](https://flopsstuff.github.io/raspidr/demo)
 
 | | |
 |---|---|
 | [docs/index.md](docs/index.md) | documentation contents — start here |
+| [docs/demo.md](docs/demo.md) | demo video and photos of the device |
 | [docs/architecture.md](docs/architecture.md) | how the system works: loop, modules, audio, configuration, deployment, measurements |
 | [docs/hardware.md](docs/hardware.md) | the speaker hardware: pins, WM8960, UPS-Lite, ring, encoder, known issues |
 | [docs/wakeword_training.md](docs/wakeword_training.md) | how the wake word model was trained and how to retrain it |

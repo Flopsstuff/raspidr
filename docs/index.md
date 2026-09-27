@@ -12,6 +12,9 @@ hero:
       text: Hardware
       link: /hardware
     - theme: alt
+      text: Demo video
+      link: /demo
+    - theme: alt
       text: GitHub
       link: https://github.com/Flopsstuff/raspidr
 features:
@@ -30,6 +33,10 @@ features:
 
 Voice assistant on a Raspberry Pi Zero 2 W: wake word «хэй пидор» ("hey peedor") → greeting → listen →
 Groq STT → Hermes agent → Groq TTS, with every stage shown on the NeoPixel ring.
+
+## [Demo](demo.md)
+
+A video of the speaker in action and photos of the device.
 
 ## [Architecture](architecture.md)
 

@@ -27,11 +27,16 @@ wake word training: [wakeword_training.md](wakeword_training.md).
 
 ## Voice loop
 
+![RaspiDR voice loop: states, transitions and ring animations](images/voice-loop.jpg)
+
+*The "0.4 s, follow-up" arrow starts at SPEAK, not THINK: the follow-up listening begins 0.4 s after the answer.
+The table and transitions below are authoritative.*
+
 | State | What happens | Ring (center off — it's the knob's mute dot; brightness 0.06) | Sound |
 |---|---|---|---|
 | IDLE | waiting for the wake word (score ≥ 0.5 for two consecutive frames); the models only run on sound (see below) | off | — |
 | GREET | greeting; the microphone is not listened to | fast white comet | `sounds/greetings/*.wav` (random, never the same one twice in a row) |
-| LISTEN | recording the utterance: Silero VAD, end = 0.9 s of silence, max 12 s, 0.3 s of pre-roll | rainbow comet | — |
+| LISTEN | recording the utterance in pieces: Silero VAD, a 0.7 s pause sends a piece to STT while listening goes on, the phrase ends after 2 s without speech, max 30 s, 0.3 s of pre-roll | rainbow comet | — |
 | THINK | Groq STT → Hermes (streaming) | amber breathing | after 1 s, looping "drops" (`sounds/think/drops.wav`) |
 | THINK (long) | Hermes > 5 s (accessing memory/tools) | spinning amber light | once «Секунду, смотрю…» ("One sec, looking…") (`sounds/wait/`), then drops again |
 | SPEAK | queue of TTS chunks | two blue dots moving toward each other | the answer |

@@ -285,5 +285,10 @@ notes: [Flopsstuff/triki](https://github.com/Flopsstuff/triki), [TrikiEmu](https
 - `dmesg` shows constant Wi-Fi errors (`brcmfmac ... timeout`, `mmc1: Controller never released inhibit
   bit(s)`, `scan error -110`): SDIO to the Wi-Fi chip is unstable. The connection stays up, but ssh
   may hang.
+- Now and then the Wi-Fi firmware fails to load at boot (`brcmfmac: brcmf_sdio_verifymemory: Downloaded RAM image is
+  corrupted`, `dongle nvram file download failed`): there is no `wlan0` for the whole boot, the wake word still
+  works, but STT fails with `Temporary failure in name resolution`. Seen on 2026-09-28 after two zero-length boots in a
+  row, with the battery at ~2% on the charger. The `raspidr-wifi-guard` unit (`src/tools/wifi_guard.sh`) handles it:
+  no `wlan0` 45 s after start → reload `brcmfmac`, still none after 30 s → reboot (at most once an hour).
 - Power is stable: `vcgencmd get_throttled` = `0x0` both on battery and on the charger.
 - Idle temperature ~47 °C.

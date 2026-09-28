@@ -13,6 +13,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 USER_NAME="$(id -un)"
 USER_ID="$(id -u)"
 UNITS=(raspidr-knob raspidr-assistant)  # start order: the knob owns the ring and the encoder
+GUARD_UNIT=raspidr-wifi-guard            # runs once at boot; start/stop/restart leave it alone
 UNIT_DIR=/etc/systemd/system
 JOURNAL_CONF=/etc/systemd/journald.conf.d/raspidr.conf
 CMDLINE=/boot/firmware/cmdline.txt
@@ -64,9 +65,22 @@ Wants=pigpiod.service" "MemoryMax=96M"
 Wants=network-online.target raspidr-knob.service" \
     "Environment=XDG_RUNTIME_DIR=/run/user/$USER_ID
 MemoryMax=320M"
+  # root, once per boot: reload the Wi-Fi driver (or reboot) when the chip's firmware failed to load.
+  # Type=simple so boot doesn't wait the minute or so it may take
+  sudo tee "$UNIT_DIR/$GUARD_UNIT.service" >/dev/null <<EOF
+[Unit]
+Description=RaspiDR Wi-Fi guard: reload brcmfmac or reboot when wlan0 doesn't appear at boot
+
+[Service]
+Type=simple
+ExecStart=$DIR/src/tools/wifi_guard.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
   sudo systemctl daemon-reload
-  sudo systemctl enable "${UNITS[@]/%/.service}" >/dev/null 2>&1
-  echo "units installed and enabled: ${UNITS[*]}"
+  sudo systemctl enable "${UNITS[@]/%/.service}" "$GUARD_UNIT.service" >/dev/null 2>&1
+  echo "units installed and enabled: ${UNITS[*]} $GUARD_UNIT"
 }
 
 install_journal() {
@@ -142,8 +156,8 @@ case "${1:-}" in
     status
     ;;
   uninstall)
-    sudo systemctl disable --now "${UNITS[@]}" 2>/dev/null || true
-    for u in "${UNITS[@]}"; do sudo rm -f "$UNIT_DIR/$u.service"; done
+    sudo systemctl disable --now "${UNITS[@]}" "$GUARD_UNIT" 2>/dev/null || true
+    for u in "${UNITS[@]}" "$GUARD_UNIT"; do sudo rm -f "$UNIT_DIR/$u.service"; done
     sudo systemctl daemon-reload
     if [[ -f "$JOURNAL_CONF" ]]; then
       sudo rm -f "$JOURNAL_CONF"

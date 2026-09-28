@@ -235,7 +235,9 @@ Main `src/assistant.py` flags: `--text "вопрос"` (question text, no microp
 ```
 
 On the Pi both processes run as systemd units, `raspidr-knob` and `raspidr-assistant` (`User=` the deploying user,
-`Restart=always`, started at boot after `pigpiod` and `wm8960-soundcard`). `raspidr.sh` in the project root manages them
+`Restart=always`, started at boot after `pigpiod` and `wm8960-soundcard`). A third unit, `raspidr-wifi-guard` (root,
+runs once per boot), reloads the Wi-Fi driver or reboots when the chip's firmware failed to load and `wlan0` never
+appeared (see [hardware](hardware.md#gotchas-and-observations)). `raspidr.sh` in the project root manages them
 and is shipped with the code:
 
 ```bash
